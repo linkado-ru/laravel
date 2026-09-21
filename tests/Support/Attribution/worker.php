@@ -60,7 +60,7 @@ try {
     CarbonImmutable::setTestNow($options['now'] ?? '2026-09-21 10:00:00');
     $configuration = new LinkadoConfiguration(new Repository(['linkado' => [
         'connection' => 'default',
-        'tracking' => ['ttl_seconds' => 120, 'visitor_cookie' => 'linkado_visitor'],
+        'tracking' => ['ttl_seconds' => 120, 'visitor_cookie' => 'linkado_visitor', 'click_cookie' => 'lk_click', 'referral_cookie' => 'lk_referral'],
     ]]));
     $eventCount = 0;
     $events->listen(AttributionConsumed::class, function () use (&$eventCount): void {
@@ -103,7 +103,11 @@ try {
     } else {
         $consume = new ConsumePendingAttribution(new RequiresActiveTransaction($capsule->getDatabaseManager(), $configuration), $configuration, $events);
         $connection->beginTransaction();
-        $snapshot = $consume->handle(Request::create('/register', 'POST', cookies: ['linkado_visitor' => $options['visitor']]));
+        $snapshot = $consume->handle(Request::create('/register', 'POST', cookies: [
+            'linkado_visitor' => $options['visitor'],
+            'lk_click' => $options['click'] ?? null,
+            'lk_referral' => $options['slug'] ?? null,
+        ]));
 
         if ($options['rollback'] ?? false) {
             $connection->rollBack();

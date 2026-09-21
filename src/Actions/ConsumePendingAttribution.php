@@ -10,6 +10,7 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Linkado\Laravel\Events\AttributionConsumed;
+use Linkado\Laravel\Support\Attribution\AttributionIdentifiers;
 use Linkado\Laravel\Support\Attribution\ConsumedAttribution;
 use Linkado\Laravel\Support\Database\RequiresActiveTransaction;
 use Linkado\Laravel\Support\LinkadoConfiguration;
@@ -54,12 +55,23 @@ final readonly class ConsumePendingAttribution
             return null;
         }
 
+        $clickCookie = $request->cookie($this->configuration->trackingClickCookie());
+        $referralCookie = $request->cookie($this->configuration->trackingReferralCookie());
+        $matches = AttributionIdentifiers::validCandidates($clickCookie, $referralCookie)
+            && ((AttributionIdentifiers::click($row->click_id) && $row->referral_slug === null && $row->click_id === $clickCookie)
+                || ($row->click_id === null && AttributionIdentifiers::referral($row->referral_slug)
+                    && AttributionIdentifiers::absent($clickCookie) && $row->referral_slug === $referralCookie));
+
         $connection->table('linkado_pending_attributions')->where('id', $row->id)->update([
             'click_id' => null,
             'referral_slug' => null,
             'consumed_at' => $consumedAt,
             'updated_at' => $consumedAt,
         ]);
+
+        if (! $matches) {
+            return null;
+        }
 
         $connection->afterCommit(fn (): mixed => $this->events->dispatch(new AttributionConsumed($consumedAt)));
 

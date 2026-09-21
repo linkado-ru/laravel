@@ -49,7 +49,7 @@ it('consumes valid click and referral attribution inside the configured transact
     p12InsertAttribution($visitorId, $clickId, $referralSlug);
 
     $result = DB::connection('linkado_test')->transaction(
-        fn (): ?ConsumedAttribution => Linkado::attribution()->consume(p12Request($visitorId)),
+        fn (): ?ConsumedAttribution => Linkado::attribution()->consume(p12Request($visitorId, $clickId, $referralSlug)),
     );
 
     expect($result)->toBeInstanceOf(ConsumedAttribution::class)
@@ -60,12 +60,12 @@ it('consumes valid click and referral attribution inside the configured transact
         ->and(DB::connection('linkado_test')->table('linkado_pending_attributions')->sole()->referral_slug)->toBeNull()
         ->and(DB::connection('linkado_test')->table('linkado_pending_attributions')->sole()->consumed_at)->not->toBeNull();
 })->with([
-    'click' => ['click-42', null],
+    'click' => ['01ARZ3NDEKTSV4RRFFQ69G5FAV', null],
     'referral slug' => [null, 'partner'],
 ]);
 
 it('returns null for a missing visitor cookie without deleting another visitor attribution', function (): void {
-    p12InsertAttribution(strtolower((string) Str::ulid()), 'click-42', null);
+    p12InsertAttribution(strtolower((string) Str::ulid()), '01ARZ3NDEKTSV4RRFFQ69G5FAV', null);
 
     $result = DB::connection('linkado_test')->transaction(
         fn (): ?ConsumedAttribution => Linkado::attribution()->consume(Request::create('/register')),
@@ -76,7 +76,7 @@ it('returns null for a missing visitor cookie without deleting another visitor a
 });
 
 it('returns null for a tampered visitor cookie without deleting another visitor attribution', function (): void {
-    p12InsertAttribution(strtolower((string) Str::ulid()), 'click-42', null);
+    p12InsertAttribution(strtolower((string) Str::ulid()), '01ARZ3NDEKTSV4RRFFQ69G5FAV', null);
 
     $result = DB::connection('linkado_test')->transaction(
         fn (): ?ConsumedAttribution => Linkado::attribution()->consume(p12Request('tampered-cookie-value')),
@@ -89,10 +89,10 @@ it('returns null for a tampered visitor cookie without deleting another visitor 
 it('deletes expired attribution without returning it', function (): void {
     CarbonImmutable::setTestNow('2026-09-21 12:00:00');
     $visitorId = strtolower((string) Str::ulid());
-    p12InsertAttribution($visitorId, 'expired-click', null, now()->subSecond());
+    p12InsertAttribution($visitorId, '01ARZ3NDEKTSV4RRFFQ69G5FAV', null, now()->subSecond());
 
     $result = DB::connection('linkado_test')->transaction(
-        fn (): ?ConsumedAttribution => Linkado::attribution()->consume(p12Request($visitorId)),
+        fn (): ?ConsumedAttribution => Linkado::attribution()->consume(p12Request($visitorId, '01ARZ3NDEKTSV4RRFFQ69G5FAV')),
     );
 
     expect($result)->toBeNull()
@@ -101,14 +101,14 @@ it('deletes expired attribution without returning it', function (): void {
 
 it('restores consumed attribution when the caller rolls back', function (): void {
     $visitorId = strtolower((string) Str::ulid());
-    p12InsertAttribution($visitorId, 'click-42', null);
+    p12InsertAttribution($visitorId, '01ARZ3NDEKTSV4RRFFQ69G5FAV', null);
     $connection = DB::connection('linkado_test');
     $connection->beginTransaction();
 
     try {
-        $result = Linkado::attribution()->consume(p12Request($visitorId));
+        $result = Linkado::attribution()->consume(p12Request($visitorId, '01ARZ3NDEKTSV4RRFFQ69G5FAV'));
 
-        expect($result?->clickId)->toBe('click-42')
+        expect($result?->clickId)->toBe('01ARZ3NDEKTSV4RRFFQ69G5FAV')
             ->and(p12AttributionCount())->toBe(1)
             ->and(DB::connection('linkado_test')->table('linkado_pending_attributions')->sole()->click_id)->toBeNull()
             ->and(DB::connection('linkado_test')->table('linkado_pending_attributions')->sole()->referral_slug)->toBeNull()
@@ -125,8 +125,8 @@ it('cannot consume the same attribution twice', function (): void {
     p12InsertAttribution($visitorId, null, 'partner');
 
     $results = DB::connection('linkado_test')->transaction(fn (): array => [
-        Linkado::attribution()->consume(p12Request($visitorId)),
-        Linkado::attribution()->consume(p12Request($visitorId)),
+        Linkado::attribution()->consume(p12Request($visitorId, null, 'partner')),
+        Linkado::attribution()->consume(p12Request($visitorId, null, 'partner')),
     ]);
 
     expect($results[0])->toBeInstanceOf(ConsumedAttribution::class)
@@ -155,10 +155,12 @@ function p12ConsumeMigration(): Migration
     return require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php';
 }
 
-function p12Request(string $visitorId): Request
+function p12Request(string $visitorId, ?string $clickId = null, ?string $referralSlug = null): Request
 {
     $request = Request::create('/register');
     $request->cookies->set('linkado_visitor', $visitorId);
+    $request->cookies->set('lk_click', $clickId);
+    $request->cookies->set('lk_referral', $referralSlug);
 
     return $request;
 }

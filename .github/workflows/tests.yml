@@ -80,6 +80,12 @@ jobs:
         if: runner.os == 'Windows'
         run: vendor/bin/pest
 
+      - name: Attribution query validation with configured PHP separators
+        run: php -d "arg_separator.input=&;" vendor/bin/pest tests/Feature/Attribution/CaptureAttributionTest.php --filter="raw referral arrays"
+
+      - name: Attribution query validation without ampersand separator
+        run: php -d "arg_separator.input=;" vendor/bin/pest tests/Feature/Attribution/CaptureAttributionTest.php --filter="exact configured query separators"
+
   database:
     runs-on: ubuntu-latest
 

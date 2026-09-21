@@ -131,6 +131,10 @@ Route::middleware(['web', 'linkado.attribution'])->group(function (): void {
 
 The package manages its encrypted visitor cookie on the `web` middleware group. Capture gives click IDs precedence over referral slugs and stores only a SHA-256 visitor hash in the database. The first active touch fixes the attribution window: later captures do not replace it or extend its TTL. A referral slug may upgrade to a click, retaining the original capture and expiry times. At expiry (including the exact boundary), a new touch starts a new window.
 
+Click IDs must pass Laravel's `Str::isUlid`; referral slugs must contain 1–100 lowercase ASCII letters or digits, optionally separated by single hyphens. Identifiers are never trimmed, truncated, or case-normalized. Null and empty strings mean absent; malformed source candidates reject capture or consumption without falling back to another source. For referral capture, an existing referral cookie takes precedence over the configured query parameter.
+
+Consumption requires the visitor cookie and an exact matching source cookie: a click row requires the same click, and a referral row requires the same referral with no click candidate. Query parameters cannot confirm consumption, and consumption never upgrades a referral to a click. A stored row must contain exactly one valid source. Matching establishes consistency with the captured browser cookies; it does not verify that the click exists in Linkado.
+
 Consume attribution and record the related SDK event inside the same transaction and on the connection configured by `linkado.connection`:
 
 ```php
@@ -162,6 +166,8 @@ DB::connection(config('linkado.connection'))->transaction(
 ```
 
 Successful consumption returns attribution once and clears its click/referral values. A consumed marker remains until the original expiry, preventing another capture in that window; the daily prune removes expired markers. Consumption and its after-commit event roll back with the caller transaction. No migration is required for these storage semantics.
+
+Missing, malformed, or mismatched source cookies return `null` and discard attribution for the identified visitor, retaining the same scrubbed marker until expiry. Discard rolls back with the caller and emits no `AttributionConsumed` event. An invalid or unknown visitor cookie does not alter another visitor's row. Existing integrations must supply matching source cookies; visitor-only consumption no longer returns attribution.
 
 The source key is the application's idempotency key. Repeating the same source key and payload returns the original row; reusing it for a different payload preserves the first row and emits a critical diagnostic event. Do not put email addresses, phone numbers, credentials, or other secrets in source keys.
 

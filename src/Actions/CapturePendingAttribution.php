@@ -9,7 +9,7 @@ use DateTimeInterface;
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\UniqueConstraintViolationException;
-use Illuminate\Support\Str;
+use Linkado\Laravel\Support\Attribution\AttributionIdentifiers;
 use Linkado\Laravel\Support\LinkadoConfiguration;
 use RuntimeException;
 
@@ -22,8 +22,12 @@ final readonly class CapturePendingAttribution
 
     public function handle(string $visitorId, mixed $clickId, mixed $referralSlug): void
     {
-        $clickId = $this->normalize($clickId);
-        $referralSlug = $this->normalize($referralSlug);
+        if (! AttributionIdentifiers::validCandidates($clickId, $referralSlug)) {
+            return;
+        }
+
+        $clickId = AttributionIdentifiers::click($clickId) ? $clickId : null;
+        $referralSlug = AttributionIdentifiers::referral($referralSlug) ? $referralSlug : null;
 
         if ($clickId === null && $referralSlug === null) {
             return;
@@ -135,16 +139,5 @@ final readonly class CapturePendingAttribution
         }
 
         return false;
-    }
-
-    private function normalize(mixed $value): ?string
-    {
-        if (! is_string($value)) {
-            return null;
-        }
-
-        $value = trim($value);
-
-        return $value === '' ? null : Str::limit($value, 255, '');
     }
 }

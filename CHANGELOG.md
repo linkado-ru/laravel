@@ -6,6 +6,8 @@ All notable changes to `linkado-ru/laravel` are documented here. The package fol
 
 ### Fixed
 
+- Validate captured and stored attribution identifiers, prefer an existing referral cookie over query, and require exact source-cookie matching during consumption. Missing, malformed, or mismatched sources return no attribution and leave a scrubbed marker until the original expiry without emitting a consumption event. Public signatures, event serialization, and schema are unchanged.
+
 - Apply host tracking eligibility consistently to capture, hosted markup, and new visitor cookies using the current request and user. Resolve policies lazily and fail closed on policy/configuration errors without swallowing downstream or database failures.
 
 - Preserve the first active attribution and its absolute expiry, allowing only referral-to-click upgrades within the original window.

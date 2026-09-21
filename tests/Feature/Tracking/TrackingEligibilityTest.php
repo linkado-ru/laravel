@@ -59,7 +59,7 @@ it('does not capture an existing visitor when host tracking policy denies', func
     trackingPolicy(fn (): bool => false);
 
     $this->withCookie('linkado_visitor', (string) Str::ulid())
-        ->withUnencryptedCookie('lk_click', 'click-denied')
+        ->withUnencryptedCookie('lk_click', '01ARZ3NDEKTSV4RRFFQ69G5FAV')
         ->get('/_tracking-policy')->assertOk()->assertSee('host-content')->assertDontSee('<script', false);
 
     expect(DB::connection('tracking_policy')->table('linkado_pending_attributions')->count())->toBe(0);

@@ -86,9 +86,9 @@ it('serializes upgrades and consumers while preserving one window and one snapsh
 ): void {
     $visitor = (string) Str::ulid();
     app(CapturePendingAttribution::class)->handle($visitor, null, 'original');
-    $a = raceWorker($this, ['visitor' => $visitor, 'operation' => $firstOperation, 'click' => $firstClick, 'hold' => true, 'now' => '2026-09-21 10:00:30']);
+    $a = raceWorker($this, ['visitor' => $visitor, 'operation' => $firstOperation, 'click' => $firstClick, 'slug' => $firstOperation === 'consume' ? 'original' : null, 'hold' => true, 'now' => '2026-09-21 10:00:30']);
     $a->await('holding');
-    $b = raceWorker($this, ['visitor' => $visitor, 'operation' => $secondOperation, 'click' => $secondClick, 'before' => 'select', 'now' => '2026-09-21 10:01:00']);
+    $b = raceWorker($this, ['visitor' => $visitor, 'operation' => $secondOperation, 'click' => $secondClick, 'slug' => $secondOperation === 'consume' && $secondClick === null ? 'original' : null, 'before' => 'select', 'now' => '2026-09-21 10:01:00']);
     $b->await('before');
     $b->release();
     raceAwaitBlocked($b->session, $a->session);
@@ -105,19 +105,19 @@ it('serializes upgrades and consumers while preserving one window and one snapsh
     if ($snapshots === 1) {
         expect($row->consumed_at)->not->toBeNull();
         expect($first['snapshot'] ?? $second['snapshot'])->toBe($firstOperation === 'capture'
-            ? ['click' => 'first-click', 'slug' => null] : ['click' => null, 'slug' => 'original']);
+            ? ['click' => '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'slug' => null] : ['click' => null, 'slug' => 'original']);
     }
 })->with([
-    'two upgrades' => ['capture', 'first-click', 'capture', 'second-click', 'first-click', null, 0],
-    'upgrade then consume' => ['capture', 'first-click', 'consume', null, null, null, 1],
-    'consume then capture' => ['consume', null, 'capture', 'second-click', null, null, 1],
+    'two upgrades' => ['capture', '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'capture', '01ARZ3NDEKTSV4RRFFQ69G5FAW', '01ARZ3NDEKTSV4RRFFQ69G5FAV', null, 0],
+    'upgrade then consume' => ['capture', '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'consume', '01ARZ3NDEKTSV4RRFFQ69G5FAV', null, null, 1],
+    'consume then capture' => ['consume', null, 'capture', '01ARZ3NDEKTSV4RRFFQ69G5FAW', null, null, 1],
     'two consumers' => ['consume', null, 'consume', null, null, null, 1],
 ]);
 
 it('uses the time after waiting for the row lock to decide expiry', function (string $operation): void {
     $visitor = (string) Str::ulid();
     app(CapturePendingAttribution::class)->handle($visitor, null, 'original');
-    $a = raceWorker($this, ['visitor' => $visitor, 'operation' => 'capture', 'click' => 'upgrade', 'hold' => true]);
+    $a = raceWorker($this, ['visitor' => $visitor, 'operation' => 'capture', 'click' => '01ARZ3NDEKTSV4RRFFQ69G5FAW', 'hold' => true]);
     $a->await('holding');
     $b = raceWorker($this, [
         'visitor' => $visitor, 'operation' => $operation, 'slug' => 'new-window', 'before' => 'select',
@@ -144,9 +144,9 @@ it('uses the time after waiting for the row lock to decide expiry', function (st
 it('makes a rolled back consumer snapshot available to the waiting consumer', function (): void {
     $visitor = (string) Str::ulid();
     app(CapturePendingAttribution::class)->handle($visitor, null, 'original');
-    $a = raceWorker($this, ['visitor' => $visitor, 'operation' => 'consume', 'hold' => true, 'rollback' => true]);
+    $a = raceWorker($this, ['visitor' => $visitor, 'operation' => 'consume', 'slug' => 'original', 'hold' => true, 'rollback' => true]);
     $a->await('holding');
-    $b = raceWorker($this, ['visitor' => $visitor, 'operation' => 'consume', 'before' => 'select']);
+    $b = raceWorker($this, ['visitor' => $visitor, 'operation' => 'consume', 'slug' => 'original', 'before' => 'select']);
     $b->await('before');
     $b->release();
     raceAwaitBlocked($b->session, $a->session);
@@ -156,6 +156,42 @@ it('makes a rolled back consumer snapshot available to the waiting consumer', fu
     expect($first['events'])->toBe(0)->and($second['events'])->toBe(1)
         ->and($second['snapshot'])->toBe(['click' => null, 'slug' => 'original']);
 });
+
+it('serializes matching and mismatched consumers without returning the wrong source', function (bool $validFirst, bool $rollback, string $source): void {
+    $visitor = (string) Str::ulid();
+    $otherVisitor = (string) Str::ulid();
+    $valid = $source === 'click' ? '01ARZ3NDEKTSV4RRFFQ69G5FAV' : 'original';
+    $wrong = $source === 'click' ? '01ARZ3NDEKTSV4RRFFQ69G5FAW' : 'other';
+    app(CapturePendingAttribution::class)->handle($visitor, $source === 'click' ? $valid : null, $source === 'slug' ? $valid : null);
+    app(CapturePendingAttribution::class)->handle($otherVisitor, $source === 'click' ? $wrong : null, $source === 'slug' ? $wrong : null);
+    $otherBefore = DB::connection('attribution_race')->table('linkado_pending_attributions')->where('visitor_hash', hash('sha256', $otherVisitor))->sole();
+    $a = raceWorker($this, [
+        'visitor' => $visitor, 'operation' => 'consume', $source => $validFirst ? $valid : $wrong,
+        'hold' => true, 'rollback' => $rollback,
+    ]);
+    $a->await('holding');
+    $b = raceWorker($this, [
+        'visitor' => $visitor, 'operation' => 'consume', $source => $validFirst ? $wrong : $valid,
+        'before' => 'select',
+    ]);
+    $b->await('before');
+    $b->release();
+    raceAwaitBlocked($b->session, $a->session);
+    $a->release();
+    $first = $a->await('done');
+    $second = $b->await('done');
+    $expected = ['click' => $source === 'click' ? $valid : null, 'slug' => $source === 'slug' ? $valid : null];
+    expect($first['snapshot'])->toBe($validFirst ? $expected : null)
+        ->and($second['snapshot'])->toBe(! $validFirst && $rollback ? $expected : null)
+        ->and($first['events'])->toBe($validFirst && ! $rollback ? 1 : 0)
+        ->and($second['events'])->toBe(! $validFirst && $rollback ? 1 : 0);
+    $row = DB::connection('attribution_race')->table('linkado_pending_attributions')->where('visitor_hash', hash('sha256', $visitor))->sole();
+    expect($row->click_id)->toBeNull()->and($row->referral_slug)->toBeNull()
+        ->and($row->consumed_at)->not->toBeNull()
+        ->and($row->captured_at)->toBe('2026-09-21 10:00:00')
+        ->and($row->expires_at)->toBe('2026-09-21 10:02:00')
+        ->and(DB::connection('attribution_race')->table('linkado_pending_attributions')->where('visitor_hash', hash('sha256', $otherVisitor))->sole())->toEqual($otherBefore);
+})->with([false, true])->with([false, true])->with(['click', 'slug']);
 
 /** @param array<string, mixed> $options */
 function raceWorker(object $test, array $options): ConcurrentWorker
