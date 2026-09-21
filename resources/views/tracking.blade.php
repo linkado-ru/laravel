@@ -1,1 +1,1 @@
-<script src="{{ $scriptUrl }}" data-endpoint-url="{{ $endpointUrl }}" data-referral-parameter="{{ $referralParameter }}" defer></script>
+<script src="{{ $scriptUrl }}" data-endpoint="{{ $endpointUrl }}" data-program-key="{{ $programKey }}" data-referral-param="{{ $referralParameter }}" data-attribution-window-days="{{ $attributionWindowDays }}" data-endpoint-url="{{ $endpointUrl }}" data-referral-parameter="{{ $referralParameter }}" defer></script>

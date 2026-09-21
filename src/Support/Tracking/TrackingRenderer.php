@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Linkado\Laravel\Contracts\DeterminesLinkadoEligibility;
 use Linkado\Laravel\Enums\DeliveryMode;
 use Linkado\Laravel\Enums\LinkadoFeature;
+use Linkado\Laravel\Exceptions\InvalidLinkadoConfiguration;
 use Linkado\Laravel\Support\EligibilityContext;
 use Linkado\Laravel\Support\LinkadoConfiguration;
 
@@ -25,6 +26,15 @@ final readonly class TrackingRenderer
 
     public function render(): string
     {
+        try {
+            return $this->renderConfiguredScript();
+        } catch (InvalidLinkadoConfiguration) {
+            return '';
+        }
+    }
+
+    private function renderConfiguredScript(): string
+    {
         if ($this->configuration->mode() === DeliveryMode::Off
             || ! $this->configuration->featureEnabled(LinkadoFeature::Tracking)
             || ! $this->eligibility->allows(
@@ -36,15 +46,25 @@ final readonly class TrackingRenderer
 
         $scriptUrl = $this->configuration->trackingScriptUrl();
         $endpointUrl = $this->configuration->trackingEndpointUrl();
+        $programKey = $this->configuration->requiredProgramKey();
+        $ttlSeconds = $this->configuration->trackingTtlSeconds();
+        $referralParameter = $this->configuration->trackingReferralParameter();
 
-        if (! $this->validUrl($scriptUrl) || ! $this->validUrl($endpointUrl)) {
+        if (! $this->validUrl($scriptUrl) || ! $this->validUrl($endpointUrl)
+            || trim($programKey) === ''
+            || trim($referralParameter) === ''
+            || $ttlSeconds % 86400 !== 0
+            || $this->configuration->trackingClickCookie() !== 'lk_click'
+            || $this->configuration->trackingReferralCookie() !== 'lk_referral') {
             return '';
         }
 
         return $this->views->make('linkado::tracking', [
             'scriptUrl' => $scriptUrl,
             'endpointUrl' => $endpointUrl,
-            'referralParameter' => $this->configuration->trackingReferralParameter(),
+            'programKey' => $programKey,
+            'attributionWindowDays' => intdiv($ttlSeconds, 86400),
+            'referralParameter' => $referralParameter,
         ])->render();
     }
 
