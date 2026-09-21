@@ -9,7 +9,9 @@ use DateTimeInterface;
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Http\Request;
 use Linkado\Laravel\Support\Attribution\AttributionIdentifiers;
+use Linkado\Laravel\Support\Attribution\IdentityLock;
 use Linkado\Laravel\Support\LinkadoConfiguration;
 use RuntimeException;
 
@@ -18,9 +20,21 @@ final readonly class CapturePendingAttribution
     public function __construct(
         private DatabaseManager $database,
         private LinkadoConfiguration $configuration,
+        private IdentityLock $identityLock,
     ) {}
 
     public function handle(string $visitorId, mixed $clickId, mixed $referralSlug): void
+    {
+        $this->execute(null, $visitorId, $clickId, $referralSlug);
+    }
+
+    /** @internal Request-aware middleware entry; the legacy entry cannot bypass a bound adapter. */
+    public function handleRequest(Request $request, string $visitorId, mixed $clickId, mixed $referralSlug): void
+    {
+        $this->execute($request, $visitorId, $clickId, $referralSlug);
+    }
+
+    private function execute(?Request $request, string $visitorId, mixed $clickId, mixed $referralSlug): void
     {
         if (! AttributionIdentifiers::validCandidates($clickId, $referralSlug)) {
             return;
@@ -38,12 +52,14 @@ final readonly class CapturePendingAttribution
 
         // Only a transaction owned by capture may be replayed after a deadlock.
         $connection->transaction(
-            fn () => $this->capture($connection, $visitorHash, $clickId, $referralSlug),
+            fn () => $this->identityLock->run($request, function (?string $identityHash) use ($connection, $visitorHash, $clickId, $referralSlug): void {
+                $this->capture($connection, $visitorHash, $clickId, $referralSlug, $identityHash);
+            }),
             attempts: $connection->transactionLevel() === 0 ? 3 : 1,
         );
     }
 
-    private function capture(Connection $connection, string $visitorHash, ?string $clickId, ?string $referralSlug): void
+    private function capture(Connection $connection, string $visitorHash, ?string $clickId, ?string $referralSlug, ?string $identityHash): void
     {
         $query = $connection->table('linkado_pending_attributions')->where('visitor_hash', $visitorHash);
         $row = $query->lockForUpdate()->first();
@@ -86,6 +102,7 @@ final readonly class CapturePendingAttribution
 
         if ($created || ($row !== null && CarbonImmutable::parse($expiresAt)->lessThanOrEqualTo($now))) {
             $query->update([
+                'identity_hash' => $identityHash,
                 'click_id' => $clickId,
                 'referral_slug' => $clickId === null ? $referralSlug : null,
                 'captured_at' => $now,
@@ -94,6 +111,10 @@ final readonly class CapturePendingAttribution
                 'updated_at' => $now,
             ]);
 
+            return;
+        }
+
+        if ($row !== null && $row->identity_hash !== $identityHash) {
             return;
         }
 

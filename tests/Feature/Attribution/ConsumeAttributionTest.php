@@ -28,6 +28,7 @@ beforeEach(function (): void {
     DB::purge('linkado_test');
 
     p12ConsumeMigration()->up();
+    (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
 });
 
 afterEach(function (): void {

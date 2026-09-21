@@ -12,9 +12,12 @@ use Illuminate\Events\Dispatcher;
 use Illuminate\Http\Request;
 use Linkado\Laravel\Actions\CapturePendingAttribution;
 use Linkado\Laravel\Actions\ConsumePendingAttribution;
+use Linkado\Laravel\Contracts\LocksLinkadoAttributionIdentity;
 use Linkado\Laravel\Events\AttributionConsumed;
+use Linkado\Laravel\Support\Attribution\IdentityLock;
 use Linkado\Laravel\Support\Database\RequiresActiveTransaction;
 use Linkado\Laravel\Support\LinkadoConfiguration;
+use Linkado\Laravel\Tests\Support\Attribution\HostIdentityAdapter;
 use Linkado\Laravel\Tests\Support\DatabaseConfiguration;
 
 require __DIR__.'/../../../vendor/autoload.php';
@@ -62,6 +65,8 @@ try {
         'connection' => 'default',
         'tracking' => ['ttl_seconds' => 120, 'visitor_cookie' => 'linkado_visitor', 'click_cookie' => 'lk_click', 'referral_cookie' => 'lk_referral'],
     ]]));
+    $transaction = new RequiresActiveTransaction($capsule->getDatabaseManager(), $configuration);
+    $identityLock = new IdentityLock($container, $transaction);
     $eventCount = 0;
     $events->listen(AttributionConsumed::class, function () use (&$eventCount): void {
         $eventCount++;
@@ -87,27 +92,53 @@ try {
         }
     });
     $snapshot = null;
+    $request = Request::create('/register', 'POST', cookies: [
+        'linkado_visitor' => $options['visitor'] ?? null,
+        'lk_click' => $options['click'] ?? null,
+        'lk_referral' => $options['slug'] ?? null,
+    ]);
+
+    if ($options['identity_binding'] ?? false) {
+        $container->instance(LocksLinkadoAttributionIdentity::class, new HostIdentityAdapter($connection));
+        $request->attributes->set('anonymous_identity', $options['identity'] ?? null);
+
+        if ($options['stale_read'] ?? false) {
+            $stale = $connection->table('anonymous_identities')->where('key', $options['identity'])->sole();
+            barrier('stale');
+        }
+    }
 
     if ($options['operation'] === 'capture') {
         if ($options['outer'] ?? false) {
             $connection->beginTransaction();
         }
-        (new CapturePendingAttribution($capsule->getDatabaseManager(), $configuration))->handle(
-            $options['visitor'], $options['click'] ?? null, $options['slug'] ?? null,
-        );
+        $capture = new CapturePendingAttribution($capsule->getDatabaseManager(), $configuration, $identityLock);
+
+        if ($options['identity_binding'] ?? false) {
+            $capture->handleRequest($request, $options['visitor'], $options['click'] ?? null, $options['slug'] ?? null);
+        } else {
+            $capture->handle($options['visitor'], $options['click'] ?? null, $options['slug'] ?? null);
+        }
 
         if ($options['outer'] ?? false) {
             $connection->table('linkado_pending_attributions')->count();
             $connection->commit();
         }
     } else {
-        $consume = new ConsumePendingAttribution(new RequiresActiveTransaction($capsule->getDatabaseManager(), $configuration), $configuration, $events);
+        $consume = new ConsumePendingAttribution($transaction, $configuration, $events, $identityLock);
         $connection->beginTransaction();
-        $snapshot = $consume->handle(Request::create('/register', 'POST', cookies: [
-            'linkado_visitor' => $options['visitor'],
-            'lk_click' => $options['click'] ?? null,
-            'lk_referral' => $options['slug'] ?? null,
-        ]));
+        $snapshot = $consume->handle($request);
+
+        if ($options['operation'] === 'register') {
+            if ($options['hold_guard'] ?? false) {
+                barrier('guarded');
+            }
+            $connection->table('anonymous_identities')->where('key', $options['identity'])->update(['claimed' => true]);
+
+            if ($options['hold_claim'] ?? false) {
+                barrier('claimed');
+            }
+        }
 
         if ($options['rollback'] ?? false) {
             $connection->rollBack();

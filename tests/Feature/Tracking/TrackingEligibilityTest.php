@@ -32,6 +32,7 @@ beforeEach(function (): void {
     config()->set('linkado.tracking.endpoint_url', 'https://api.example.test/track');
     DB::purge('tracking_policy');
     (require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php')->up();
+    (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
 
     Route::middleware(['web', 'linkado.attribution'])->get('/_tracking-policy', fn () => response(
         'host-content'.Blade::render('@linkadoTracking', deleteCachedView: true),

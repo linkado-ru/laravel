@@ -5,12 +5,14 @@ declare(strict_types=1);
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
 use Linkado\Laravel\Contracts\DeterminesLinkadoEligibility;
+use Linkado\Laravel\Contracts\LocksLinkadoAttributionIdentity;
 use Linkado\Laravel\Contracts\ResolvesLinkadoSsoUser;
 use Linkado\Laravel\Enums\AttemptOutcome;
 use Linkado\Laravel\Enums\LinkadoFeature;
 use Linkado\Laravel\Enums\OutboxStatus;
 use Linkado\Laravel\Facades\Linkado as LinkadoFacade;
 use Linkado\Laravel\Linkado;
+use Linkado\Laravel\Support\Attribution\AttributionIdentity;
 use Linkado\Laravel\Support\Attribution\ConsumedAttribution;
 use Linkado\Laravel\Support\EligibilityContext;
 use Linkado\Laravel\Support\ResolvedSsoUser;
@@ -107,3 +109,16 @@ function testEventData(): EventData
         }
     };
 }
+
+it('adds the optional host identity locking contract without a default binding', function (): void {
+    $method = new ReflectionMethod(LocksLinkadoAttributionIdentity::class, 'withLockedIdentity');
+    expect($method->getReturnType()?->getName())->toBe('void')
+        ->and($method->getParameters())->toHaveCount(2)
+        ->and($method->getParameters()[0]->getType()?->getName())->toBe(Request::class)
+        ->and($method->getParameters()[1]->getType()?->getName())->toBe(Closure::class)
+        ->and(app()->bound(LocksLinkadoAttributionIdentity::class))->toBeFalse();
+    $identity = new AttributionIdentity(key: 'opaque-key', captureAllowed: false);
+    expect((new ReflectionClass($identity))->isFinal())->toBeTrue()
+        ->and((new ReflectionClass($identity))->isReadOnly())->toBeTrue()
+        ->and($identity->key)->toBe('opaque-key')->and($identity->captureAllowed)->toBeFalse();
+});

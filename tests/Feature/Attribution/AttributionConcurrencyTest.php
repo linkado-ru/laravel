@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Linkado\Laravel\Actions\CapturePendingAttribution;
@@ -22,6 +23,12 @@ beforeEach(function (): void {
     config()->set('linkado.tracking.ttl_seconds', 120);
     DB::purge('attribution_race');
     (require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php')->up();
+    (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
+    DB::connection('attribution_race')->getSchemaBuilder()->create('anonymous_identities', function (Blueprint $table): void {
+        $table->string('key')->primary();
+        $table->boolean('claimed')->default(false);
+    });
+    DB::connection('attribution_race')->table('anonymous_identities')->insert(['key' => 'anonymous-a']);
     $this->raceSchemaCreated = true;
     CarbonImmutable::setTestNow('2026-09-21 10:00:00');
     $this->workers = [];
@@ -34,6 +41,7 @@ afterEach(function (): void {
     CarbonImmutable::setTestNow();
 
     if ($this->raceSchemaCreated ?? false) {
+        DB::connection('attribution_race')->getSchemaBuilder()->dropIfExists('anonymous_identities');
         (require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php')->down();
         DB::purge('attribution_race');
     }
@@ -58,11 +66,13 @@ it('serializes two captures of a missing row at the engine default isolation', f
 
 it('recovers a real insert conflict through a savepoint and reads the committed winner', function (string $prefix): void {
     if ($prefix !== '') {
+        DB::connection('attribution_race')->getSchemaBuilder()->dropIfExists('anonymous_identities');
         $migration = require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php';
         $migration->down();
         config()->set('database.connections.attribution_race.prefix', $prefix);
         DB::purge('attribution_race');
         $migration->up();
+        (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
     }
     $visitor = (string) Str::ulid();
     $b = raceWorker($this, ['visitor' => $visitor, 'operation' => 'capture', 'slug' => 'loser', 'before' => 'insert', 'isolation' => 'read-committed', 'now' => '2026-09-21 10:01:00', 'outer' => true, 'prefix' => $prefix]);
@@ -223,3 +233,77 @@ function raceAwaitBlocked(int $waiting, int $blocking): void
 
     throw new RuntimeException('No database lock wait observed between the independent workers.');
 }
+
+it('serializes identity capture first and registration second with a single snapshot', function (): void {
+    $visitor = (string) Str::ulid();
+    $options = ['identity_binding' => true, 'identity' => 'anonymous-a', 'visitor' => $visitor, 'slug' => 'first'];
+    $a = raceWorker($this, [...$options, 'operation' => 'capture', 'hold' => true]);
+    $a->await('holding');
+    $b = raceWorker($this, [...$options, 'operation' => 'register']);
+    raceAwaitBlocked($b->session, $a->session);
+    $a->release();
+    $a->await('done');
+    $result = $b->await('done');
+    expect($result['snapshot'])->toBe(['click' => null, 'slug' => 'first'])
+        ->and($result['events'])->toBe(1);
+    $row = DB::connection('attribution_race')->table('linkado_pending_attributions')->sole();
+    expect($row->identity_hash)->toBe(hash('sha256', 'linkado:attribution-identity:anonymous-a'))
+        ->and($row->consumed_at)->not->toBeNull()
+        ->and($row->referral_slug)->toBeNull();
+    $late = raceWorker($this, [...$options, 'visitor' => (string) Str::ulid(), 'operation' => 'capture', 'now' => '2026-09-22 10:00:00']);
+    $late->await('done');
+    expect(DB::connection('attribution_race')->table('linkado_pending_attributions')->sole())->toEqual($row);
+});
+
+it('holds the identity lock through claim without pending visitor or source', function (bool $hasVisitor, bool $hasSource, bool $rollback): void {
+    $visitor = (string) Str::ulid();
+    $options = ['identity_binding' => true, 'identity' => 'anonymous-a'];
+    $a = raceWorker($this, [...$options, 'operation' => 'register', 'visitor' => $hasVisitor ? $visitor : null, 'slug' => $hasSource ? 'first' : null, 'hold_guard' => true, 'hold_claim' => true, 'rollback' => $rollback]);
+    $a->await('guarded');
+    $b = raceWorker($this, [...$options, 'operation' => 'capture', 'visitor' => $visitor, 'slug' => 'first']);
+    raceAwaitBlocked($b->session, $a->session);
+    $a->release();
+    $a->await('claimed');
+    raceAwaitBlocked($b->session, $a->session);
+    $a->release();
+    $registered = $a->await('done');
+    $b->await('done');
+    expect($registered['snapshot'])->toBeNull()->and($registered['events'])->toBe(0)
+        ->and(DB::connection('attribution_race')->table('anonymous_identities')->value('claimed'))->toBeIn($rollback ? [false, 0] : [true, 1])
+        ->and(DB::connection('attribution_race')->table('linkado_pending_attributions')->count())->toBe($rollback ? 1 : 0);
+})->with([false, true])->with([false, true])->with([false, true]);
+
+it('rechecks a stale anonymous identity after another process commits registration', function (): void {
+    $options = ['identity_binding' => true, 'identity' => 'anonymous-a', 'visitor' => (string) Str::ulid(), 'slug' => 'first'];
+    $late = raceWorker($this, [...$options, 'operation' => 'capture', 'stale_read' => true]);
+    $late->await('stale');
+    $registration = raceWorker($this, [...$options, 'operation' => 'register']);
+    $registration->await('done');
+    $late->release();
+    $late->await('done');
+    expect(DB::connection('attribution_race')->table('linkado_pending_attributions')->count())->toBe(0);
+});
+
+it('serializes registration first with an existing bound row and a rotated visitor', function (bool $rollback): void {
+    $options = ['identity_binding' => true, 'identity' => 'anonymous-a', 'visitor' => (string) Str::ulid(), 'slug' => 'first'];
+    $seed = raceWorker($this, [...$options, 'operation' => 'capture']);
+    $seed->await('done');
+    $before = DB::connection('attribution_race')->table('linkado_pending_attributions')->sole();
+    $a = raceWorker($this, [...$options, 'operation' => 'register', 'hold_guard' => true, 'rollback' => $rollback]);
+    $a->await('guarded');
+    $b = raceWorker($this, [...$options, 'operation' => 'capture', 'visitor' => (string) Str::ulid()]);
+    raceAwaitBlocked($b->session, $a->session);
+    $a->release();
+    $result = $a->await('done');
+    $b->await('done');
+    expect($result['snapshot'])->toBe(['click' => null, 'slug' => 'first'])
+        ->and($result['events'])->toBe($rollback ? 0 : 1)
+        ->and(DB::connection('attribution_race')->table('linkado_pending_attributions')->count())->toBe($rollback ? 2 : 1);
+    $original = DB::connection('attribution_race')->table('linkado_pending_attributions')->where('id', $before->id)->sole();
+
+    if ($rollback) {
+        expect($original)->toEqual($before);
+    } else {
+        expect($original->consumed_at)->not->toBeNull()->and($original->referral_slug)->toBeNull();
+    }
+})->with([false, true]);

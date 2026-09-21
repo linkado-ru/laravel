@@ -14,7 +14,7 @@ seeders:
 
 purge:
   files:
-    - database/migrations/*_create_linkado_*_table.php
+    - database/migrations/*_linkado_*_table.php
 
 workbench:
   start: '/'

@@ -20,6 +20,7 @@ beforeEach(function (): void {
     config()->set('linkado.tracking.ttl_seconds', 120);
     DB::purge('first_touch');
     (require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php')->up();
+    (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
     CarbonImmutable::setTestNow('2026-09-21 10:00:00');
 });
 

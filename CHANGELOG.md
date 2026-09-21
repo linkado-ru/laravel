@@ -4,6 +4,10 @@ All notable changes to `linkado-ru/laravel` are documented here. The package fol
 
 ## Unreleased
 
+### Added
+
+- Optional host identity locking through `LocksLinkadoAttributionIdentity` and `AttributionIdentity`, with a new nullable `identity_hash` migration. Capture and consumption serialize with host registration on the same configured connection, preserving active ownership and rejecting closed or unresolved identities without visitor-only fallback. Call consume before host claim, including when attribution or customer events are absent. Legacy unbound rows are not backfilled; publish/apply the migration before enabling an adapter.
+
 ### Fixed
 
 - Validate captured and stored attribution identifiers, prefer an existing referral cookie over query, and require exact source-cookie matching during consumption. Missing, malformed, or mismatched sources return no attribution and leave a scrubbed marker until the original expiry without emitting a consumption event. Public signatures, event serialization, and schema are unchanged.

@@ -79,10 +79,10 @@ beforeEach(function (): void {
 });
 
 afterEach(function (): void {
-    $migrations = array_reverse(linkadoMigrations());
-
-    foreach ($migrations as $migration) {
-        $migration->down();
+    if (linkadoSchema()->hasTable('linkado_pending_attributions')) {
+        foreach (array_reverse(linkadoMigrations()) as $migration) {
+            $migration->down();
+        }
     }
 
     DB::purge('host_test');
@@ -215,12 +215,21 @@ it('creates the exact pending attribution schema', function (): void {
         'consumed_at',
         'created_at',
         'updated_at',
+        'identity_hash',
     ])->and(linkadoSchema()->getColumnType('linkado_pending_attributions', 'id'))->toBeIn(['bigint', 'int8', 'integer'])
         ->and(linkadoIndexes('linkado_pending_attributions'))->toBe([
             'expires_at' => ['columns' => ['expires_at'], 'unique' => false, 'primary' => false],
             'id' => ['columns' => ['id'], 'unique' => true, 'primary' => true],
             'visitor_hash' => ['columns' => ['visitor_hash'], 'unique' => true, 'primary' => false],
         ]);
+
+    $columns = collect(linkadoSchema()->getColumns('linkado_pending_attributions'))->keyBy('name');
+    expect($columns['identity_hash']['nullable'])->toBeTrue()
+        ->and($columns['identity_hash']['type_name'])->toBe('varchar');
+
+    if (DB::connection('linkado_test')->getDriverName() !== 'sqlite') {
+        expect($columns['identity_hash']['type'])->toContain('(64)');
+    }
 
     $attributionId = DB::connection('linkado_test')->table('linkado_pending_attributions')->insertGetId([
         'visitor_hash' => hash('sha256', '01J00000000000000000000004'),

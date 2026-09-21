@@ -46,7 +46,8 @@ final readonly class CapturePendingAttribution
 
         $cookieReferral = $request->cookie($this->configuration->trackingReferralCookie());
 
-        $this->capture->handle(
+        $this->capture->handleRequest(
+            request: $request,
             visitorId: $visitorId,
             clickId: $request->cookie($this->configuration->trackingClickCookie()),
             referralSlug: AttributionIdentifiers::absent($cookieReferral) ? $this->queryReferral($request) : $cookieReferral,

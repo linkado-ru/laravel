@@ -208,6 +208,49 @@ The same tracking eligibility policy gates visitor-cookie issuance and attributi
 
 Keep the resolver read-only and arrange middleware so the required authentication and impersonation context is available before visitor issuance and capture. Admin and impersonation rules belong to the application. Decisions and request/user context are evaluated on each operation, not cached by the package. This policy check alone does not serialize attribution with concurrent registration or identity claims.
 
+## Optional host identity locking
+
+Applications with an anonymous identity lifecycle can bind `LocksLinkadoAttributionIdentity`. Without this binding, attribution remains visitor-only. The additive `AttributionIdentity` value object has `string $key` and `bool $captureAllowed`; the key must be a stable, opaque server-side identifier without PII. Only its namespaced SHA-256 hash is stored in `identity_hash`.
+
+```php
+use Closure;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Linkado\Laravel\Contracts\LocksLinkadoAttributionIdentity;
+use Linkado\Laravel\Support\Attribution\AttributionIdentity;
+
+final class HostAttributionIdentity implements LocksLinkadoAttributionIdentity
+{
+    public function withLockedIdentity(Request $request, Closure $operation): void
+    {
+        // A trusted host middleware has already resolved this opaque key.
+        // Do not use an untrusted cookie, query parameter, or cached lifecycle state.
+        $key = $request->attributes->get('resolved_anonymous_key');
+        if (! is_string($key)) {
+            return;
+        }
+
+        $identity = DB::connection(config('linkado.connection'))
+            ->table('anonymous_identities')->where('key', $key)
+            ->lockForUpdate()->first();
+
+        if ($identity !== null) {
+            $operation(new AttributionIdentity($identity->key, ! $identity->claimed));
+        }
+    }
+}
+
+$this->app->bind(LocksLinkadoAttributionIdentity::class, HostAttributionIdentity::class);
+```
+
+The table and lifecycle belong to the application; the package does not create them. The adapter runs inside an active transaction on `linkado.connection`. It must re-read the host row under `FOR UPDATE` and invoke `Closure(AttributionIdentity): void` synchronously once while holding that lock, or not invoke it if identity is unresolved. It must not commit or roll back the caller's transaction, perform remote requests, or manage pending attribution. Use the same connection for the host identity and package tables. Resolve host context before the capture middleware; the separate eligibility policy remains read-only.
+
+During registration, call `Linkado::attribution()->consume($request)` **before claiming the host identity**, inside the registration transaction on that connection. Call consume even when visitor/source cookies or pending attribution are absent and when customer events are disabled. The identity lock remains held until the host transaction ends. All competing host claim paths must follow this protocol. Lock order is host identity first, pending attribution second. A successful claim prevents later captures even after expiry, pruning, or visitor rotation; a rolled-back claim and consumption restore the previous state. No Linkado HTTP request is made on this path.
+
+Identity bindings are checked for each operation. An unresolved or closed identity yields no capture or snapshot; it never falls back to visitor-only mode. The requestless `CapturePendingAttribution::handle()` refuses writes while an adapter is bound. Active rows cannot change identity. Identity mismatches return no attribution without scrubbing or otherwise modifying the row, even when source cookies mismatch. Legacy rows with `identity_hash = null` cannot be adopted by an adapter, and bound rows cannot be consumed after removing it. Once an old window expires, capture may create a new window under the current identity/lifecycle rules; existing visitors are never merged across devices.
+
+For upgrade, pause attribution capture and related registration transitions, publish migrations and apply `2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php`, check `linkado:health`, then enable the adapter and resume. The three published create migrations remain unchanged. Do not backfill identity associations from guesses. For rollback, disable the affected integration first; removing an adapter or reverting package code does not preserve lifecycle guarantees, and the migration must not be dropped automatically.
+
 ## SSO
 
 SSO is exposed only as the named POST route `linkado.sso.launch`. Launch it from a CSRF-protected form; do not link to the endpoint with GET:
@@ -305,7 +348,7 @@ Listen to package lifecycle events for application-specific observability. Their
 
 ## Privacy and data handling
 
-- Pending attribution stores a visitor hash, click/referral value, and timestamps. It stores no IP address, user agent, email, or host user foreign key.
+- Pending attribution stores a visitor hash, an optional opaque identity hash, click/referral value, and timestamps. It stores no IP address, user agent, email, or host user foreign key.
 - Outbox rows contain the official SDK payload. Send only identifiers and metadata allowed by the SDK; never add PII or secrets.
 - Tracking cookies are package-scoped. Invalid or tampered visitor cookies are rotated without logging the raw value.
 - Credentials are resolved lazily and excluded from configuration exceptions and connector debug output.
