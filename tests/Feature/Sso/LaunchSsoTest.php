@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 use Illuminate\Auth\GenericUser;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
+use Linkado\Laravel\Actions\CreateSsoLink;
 use Linkado\Laravel\Contracts\DeterminesLinkadoEligibility;
 use Linkado\Laravel\Contracts\ResolvesLinkadoSsoUser;
 use Linkado\Laravel\Enums\LinkadoFeature;
@@ -128,6 +130,19 @@ it('sends the exact resolved user payload outside a transaction and redirects wi
     'nullable email' => [null, false],
 ]);
 
+it('exposes the one-time SSO URL only in the successful Location header', function (): void {
+    $nonce = Str::random(40);
+    $url = 'https://linkado.test/sso/'.$nonce;
+    p13MockConnector(p13SsoResponse($url));
+
+    $response = $this->actingAs(p13User())->post('/linkado/sso');
+
+    $response->assertStatus(302)->assertRedirect($url);
+
+    expect($response->getContent())->not->toContain($nonce)
+        ->and(json_encode(session()->all(), JSON_THROW_ON_ERROR))->not->toContain($nonce);
+});
+
 it('rejects malformed insecure and wrong-host redirect URLs', function (string $url): void {
     p13MockConnector(p13SsoResponse($url));
 
@@ -139,6 +154,52 @@ it('rejects malformed insecure and wrong-host redirect URLs', function (string $
     'malformed' => ['not a URL'],
     'insecure' => ['http://linkado.test/sso/signed-nonce'],
     'wrong host' => ['https://evil.example/sso/signed-nonce'],
+]);
+
+it('rejects redirect authority changes and ambiguous URL syntax', function (string $url): void {
+    p13MockConnector(p13SsoResponse($url));
+
+    $this->actingAs(p13User())->post('/linkado/sso')
+        ->assertRedirect('/safe')
+        ->assertSessionHasErrors('linkado');
+})->with([
+    'username' => ['https://account@linkado.test/sso/link'],
+    'password' => ['https://account:password@linkado.test/sso/link'],
+    'empty user-info' => ['https://@linkado.test/sso/link'],
+    'empty username' => ['https://:password@linkado.test/sso/link'],
+    'foreign port' => ['https://linkado.test:8443/sso/link'],
+    'host suffix' => ['https://linkado.test.evil.test/sso/link'],
+    'trailing host dot' => ['https://linkado.test./sso/link'],
+    'backslash in path' => ['https://linkado.test/sso/\\link'],
+    'carriage return' => ["https://linkado.test/sso/\rlink"],
+    'line feed' => ["https://linkado.test/sso/\nlink"],
+    'tab' => ["https://linkado.test/sso/\tlink"],
+    'encoded CRLF' => ['https://linkado.test/sso/%0d%0aLocation:evil'],
+    'encoded control' => ['https://linkado.test/sso/%00link'],
+]);
+
+it('accepts only the configured effective HTTPS port', function (string $baseUrl, string $url, bool $allowed): void {
+    config()->set('linkado.base_url', $baseUrl);
+    p13MockConnector(p13SsoResponse($url));
+
+    $response = $this->actingAs(p13User())->post('/linkado/sso');
+
+    $response->assertRedirect($allowed ? $url : '/safe');
+
+    if ($allowed) {
+        $response->assertSessionHasNoErrors();
+    } else {
+        $response->assertSessionHasErrors('linkado');
+    }
+})->with([
+    'implicit 443' => ['https://linkado.test/api/v1', 'https://linkado.test/sso/link', true],
+    'explicit redirect 443' => ['https://linkado.test/api/v1', 'https://linkado.test:443/sso/link', true],
+    'explicit base 443' => ['https://linkado.test:443/api/v1', 'https://linkado.test/sso/link', true],
+    'case-insensitive host and scheme' => ['https://LINKADO.test/api/v1', 'HTTPS://linkado.TEST/sso/link', true],
+    'matching custom port' => ['https://linkado.test:8443/api/v1', 'https://linkado.test:8443/sso/link', true],
+    'missing custom port' => ['https://linkado.test:8443/api/v1', 'https://linkado.test/sso/link', false],
+    'default instead of custom port' => ['https://linkado.test:8443/api/v1', 'https://linkado.test:443/sso/link', false],
+    'different custom port' => ['https://linkado.test:8443/api/v1', 'https://linkado.test:9443/sso/link', false],
 ]);
 
 it('turns Linkado HTTP failures into a safe translated redirect', function (int $status): void {
@@ -209,6 +270,120 @@ it('keeps credentials response bodies URLs and nonces out of logs and the sessio
             'https://linkado.test/sso/one-time-nonce',
             'one-time-nonce',
         );
+});
+
+it('redacts SSO failures at both the action and HTTP boundaries', function (string $failure): void {
+    $nonce = Str::random(40);
+    $token = Str::random(40);
+    $email = Str::random(20).'@example.test';
+    $url = 'https://linkado.test/sso/'.$nonce;
+    $handler = new TestHandler;
+    Log::getLogger()->pushHandler($handler);
+    config()->set('linkado.token', $token);
+    p13BindResolver($email);
+    $networkCalls = 0;
+
+    $response = match ($failure) {
+        'invalid redirect' => p13SsoResponse('https://untrusted.test/sso/'.$nonce),
+        'HTTP failure' => MockResponse::make(['error' => ['message' => $url], 'token' => $token], 500),
+        'network failure' => MockResponse::make()->throw(
+            static function (PendingRequest $request) use ($url, $token, &$networkCalls): FatalRequestException {
+                $networkCalls++;
+
+                return new FatalRequestException(new RuntimeException($url.' '.$token), $request);
+            },
+        ),
+        'malformed DTO' => MockResponse::make([
+            'data' => ['id' => 'synthetic-link', 'url' => $url, 'expires_at' => $nonce],
+        ], 201),
+    };
+    $mockClient = p13MockConnector($response);
+    $user = new GenericUser(['id' => $nonce, 'email' => $email, 'password' => $token]);
+    $request = Request::create('/linkado/sso', 'POST', ['private_value' => $url]);
+    $previousIgnoreArgs = ini_set('zend.exception_ignore_args', '0');
+    $exception = null;
+
+    try {
+        app(CreateSsoLink::class)->handle($user, $request);
+    } catch (Throwable $caught) {
+        $exception = $caught;
+    } finally {
+        ini_set('zend.exception_ignore_args', (string) $previousIgnoreArgs);
+    }
+
+    expect($exception)->not->toBeNull();
+    $details = $exception?->getMessage().' '.$exception?->getTraceAsString();
+
+    foreach ([$nonce, $token, $email, $url] as $sensitive) {
+        expect(str_contains($details, $sensitive))->toBeFalse();
+    }
+
+    expect($exception)->toBeInstanceOf(UnexpectedValueException::class)
+        ->and($exception?->getPrevious())->toBeNull();
+
+    $actionFrames = array_values(array_filter(
+        $exception?->getTrace() ?? [],
+        static fn (array $frame): bool => ($frame['class'] ?? null) === CreateSsoLink::class
+            && $frame['function'] === 'handle',
+    ));
+    expect($actionFrames)->toHaveCount(1)
+        ->and($actionFrames[0]['args'])->toHaveCount(2);
+
+    foreach ($actionFrames[0]['args'] as $argument) {
+        expect($argument)->toBeInstanceOf(SensitiveParameterValue::class);
+    }
+
+    $this->actingAs($user)->post('/linkado/sso')
+        ->assertRedirect('/safe')
+        ->assertSessionHasErrors('linkado');
+
+    $logs = implode("\n", array_map(
+        static fn (LogRecord $record): string => $record->message.' '.json_encode($record->context, JSON_THROW_ON_ERROR),
+        $handler->getRecords(),
+    ));
+    $session = json_encode(session()->all(), JSON_THROW_ON_ERROR);
+
+    foreach ([$nonce, $token, $email, $url] as $sensitive) {
+        expect(str_contains($logs.$session, $sensitive))->toBeFalse();
+    }
+
+    if ($failure === 'network failure') {
+        // Saloon records responses, so connection failures need a transport attempt counter.
+        expect($networkCalls)->toBe(2);
+    } else {
+        $mockClient->assertSentCount(2, CreateSsoLinkRequest::class);
+    }
+})->with(['invalid redirect', 'HTTP failure', 'network failure', 'malformed DTO']);
+
+it('creates a fresh SSO link for each user without reusing the previous request payload', function (): void {
+    app()->instance(ResolvesLinkadoSsoUser::class, new class implements ResolvesLinkadoSsoUser
+    {
+        public function resolve(Authenticatable $user): ResolvedSsoUser
+        {
+            return new ResolvedSsoUser(
+                externalUserId: (string) $user->getAuthIdentifier(),
+                email: null,
+                emailVerified: false,
+                displayName: 'Synthetic user',
+                redirectTo: SsoRedirect::AffiliatePortal,
+            );
+        }
+    });
+    $firstUrl = 'https://linkado.test/sso/'.Str::random(40);
+    $secondUrl = 'https://linkado.test/sso/'.Str::random(40);
+    $mockClient = new MockClient([p13SsoResponse($firstUrl), p13SsoResponse($secondUrl)]);
+    app(LinkadoConnector::class)->withMockClient($mockClient);
+    $firstUser = p13User();
+    $secondUser = p13User();
+
+    $this->actingAs($firstUser)->post('/linkado/sso')->assertRedirect($firstUrl);
+    expect($mockClient->getLastPendingRequest()?->body()->all()['external_user_id'])->toBe($firstUser->getAuthIdentifier());
+
+    $this->actingAs($secondUser)->post('/linkado/sso')->assertRedirect($secondUrl);
+    expect($mockClient->getLastPendingRequest()?->body()->all()['external_user_id'])->toBe($secondUser->getAuthIdentifier())
+        ->and(json_encode(session()->all(), JSON_THROW_ON_ERROR))->not->toContain($firstUrl, $secondUrl);
+
+    $mockClient->assertSentCount(2, CreateSsoLinkRequest::class);
 });
 
 function p13User(): GenericUser

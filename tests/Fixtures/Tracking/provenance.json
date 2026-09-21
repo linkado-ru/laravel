@@ -1,0 +1,21 @@
+{
+  "runtime_repository": "git@github.com:linkado-ru/app.git",
+  "runtime_commit": "ba5d86eb9f26ffd505fbe45b93ff748f4a01e21f",
+  "source_path": "resources/js/tracking.js",
+  "asset_path": "public/build/tracking.js",
+  "sha256": "58c8220d4203ccb96edeb8eb8e53f0444a1f5ff2e911910978797fca25832937",
+  "source_sha256": {
+    "resources/js/tracking.js": "0a7e74e3c27ee52dbade446aaef1609462eb892ffaadbc880f8bbd3da1daab57",
+    "resources/js/tracking-core.js": "b4122ad5bc681fff29d97295a66e46ab46094a45edcba707755c9b6739bbc3ca",
+    "vite.config.js": "2b70fd3a6f7e9fad277d3c2aa4730a738b6a3beea52002b97924045b9603f7b4",
+    "package-lock.json": "2657e362a8d58f6a13d838b39e489b77549b14c34951fe78332343fa40281f9b"
+  },
+  "verified_on": "2026-09-21",
+  "provenance": "Unmodified local runtime build; clean runtime checkout; Vite manifest maps source_path to tracking.js. Asset hash matches the approved master-plan capture. Source and built contract inspected. Deployed URL/bytes remain a P7/H4 gate.",
+  "reproduction": {
+    "node": "24.21.0",
+    "vite": "8.3.0",
+    "method": "Vite build API, configFile:false, envDir:false, publicDir:false, build.write:false, rolldownOptions.input=source_path, output.entryFileNames=tracking.js",
+    "result": "In-memory build output equals the original runtime asset byte for byte; no runtime files changed."
+  }
+}

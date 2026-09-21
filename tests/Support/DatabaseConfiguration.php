@@ -54,6 +54,6 @@ final class DatabaseConfiguration
     {
         $value = getenv($key);
 
-        return is_string($value) && $value !== '' ? $value : $default;
+        return is_string($value) ? $value : $default;
     }
 }

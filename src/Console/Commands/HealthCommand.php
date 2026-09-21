@@ -157,6 +157,10 @@ final class HealthCommand extends Command
             }
         }
 
+        if ($schema->hasTable('linkado_pending_attributions') && ! $schema->hasColumn('linkado_pending_attributions', 'identity_hash')) {
+            $missing++;
+        }
+
         return $missing === 0
             ? $this->healthy('migrations')
             : $this->failure('migrations', $missing);

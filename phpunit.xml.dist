@@ -26,6 +26,12 @@
             <directory>tests/Unit</directory>
         </testsuite>
     </testsuites>
+    <!-- Server-only races run explicitly in the database CI job; the explicit group option opts in. -->
+    <groups>
+        <exclude>
+            <group>attribution-concurrency</group>
+        </exclude>
+    </groups>
     <source>
         <include>
             <directory suffix=".php">src</directory>

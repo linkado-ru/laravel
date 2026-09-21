@@ -14,6 +14,9 @@ abstract class TestCase extends Orchestra
 
     protected function defineEnvironment($app): void
     {
+        // Each test application owns its throttle counters, including parallel workers.
+        $app['config']->set('cache.default', 'array');
+
         $this->publishingRoot = sys_get_temp_dir().'/linkado-publish-'.bin2hex(random_bytes(12));
         $files = new Filesystem;
 

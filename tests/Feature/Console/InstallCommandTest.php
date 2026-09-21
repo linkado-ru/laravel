@@ -10,7 +10,7 @@ beforeEach(function (): void {
     $this->files = app(Filesystem::class);
     $this->publishedConfigPath = config_path('linkado.php');
     $this->publishedLanguagePath = app()->langPath('vendor/linkado');
-    $this->migrationPattern = database_path('migrations/*_create_linkado_*_table.php');
+    $this->migrationPattern = database_path('migrations/*_linkado_*_table.php');
 });
 
 it('publishes Linkado resources safely when run more than once', function (): void {
@@ -25,11 +25,12 @@ it('publishes Linkado resources safely when run more than once', function (): vo
 
     expect($this->files->exists($this->publishedConfigPath))->toBeTrue()
         ->and($this->files->exists($this->publishedLanguagePath.'/en/messages.php'))->toBeTrue()
-        ->and($publishedMigrations)->toHaveCount(3)
+        ->and($publishedMigrations)->toHaveCount(4)
         ->and(collect($publishedMigrations)->map(fn (string $path): string => basename($path))->implode("\n"))
         ->toContain('create_linkado_outbox_events_table.php')
         ->toContain('create_linkado_outbox_attempts_table.php')
-        ->toContain('create_linkado_pending_attributions_table.php');
+        ->toContain('create_linkado_pending_attributions_table.php')
+        ->toContain('2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php');
 });
 
 it('does not overwrite an existing Linkado configuration without force', function (): void {
@@ -57,7 +58,7 @@ it('preserves published migrations across later installation and publication', f
     $this->artisan('linkado:install')->assertSuccessful();
 
     $original = glob($this->migrationPattern) ?: [];
-    expect($original)->toHaveCount(3);
+    expect($original)->toHaveCount(4);
     $this->files->append($original[0], "\n// Host migration customization.\n");
     $contents = array_map(fn (string $path): string => $this->files->get($path), $original);
 
@@ -91,9 +92,10 @@ it('can migrate before and after later installation without recreating tables', 
     $this->artisan('linkado:install')->assertSuccessful();
     $this->artisan('migrate', ['--force' => true])->assertSuccessful();
 
-    expect(glob($this->migrationPattern))->toHaveCount(3)
-        ->and(DB::table('migrations')->count())->toBe(3)
+    expect(glob($this->migrationPattern))->toHaveCount(4)
+        ->and(DB::table('migrations')->count())->toBe(4)
         ->and(Schema::hasTable('linkado_outbox_events'))->toBeTrue()
         ->and(Schema::hasTable('linkado_outbox_attempts'))->toBeTrue()
-        ->and(Schema::hasTable('linkado_pending_attributions'))->toBeTrue();
+        ->and(Schema::hasTable('linkado_pending_attributions'))->toBeTrue()
+        ->and(Schema::hasColumn('linkado_pending_attributions', 'identity_hash'))->toBeTrue();
 });

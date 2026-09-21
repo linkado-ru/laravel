@@ -25,6 +25,7 @@ use Linkado\Laravel\Console\Commands\RecoverCommand;
 use Linkado\Laravel\Console\Commands\RetryCommand;
 use Linkado\Laravel\Contracts\DeterminesLinkadoEligibility;
 use Linkado\Laravel\Contracts\ResolvesLinkadoSsoUser;
+use Linkado\Laravel\Exceptions\InvalidLinkadoConfiguration;
 use Linkado\Laravel\Http\Middleware\CapturePendingAttribution;
 use Linkado\Laravel\Http\Middleware\EnsureLinkadoVisitor;
 use Linkado\Laravel\Support\Attribution\AttributionManager;
@@ -32,6 +33,7 @@ use Linkado\Laravel\Support\Database\RequiresActiveTransaction;
 use Linkado\Laravel\Support\Events\EventFeatureMap;
 use Linkado\Laravel\Support\Events\EventPayloadCodec;
 use Linkado\Laravel\Support\LinkadoConfiguration;
+use Linkado\Laravel\Support\Tracking\TrackingGate;
 use Linkado\Laravel\Support\Tracking\TrackingRenderer;
 use Linkado\PhpSdk\LinkadoConnector;
 
@@ -83,12 +85,16 @@ class LinkadoServiceProvider extends ServiceProvider
 
         $this->app->singleton(ResolvesLinkadoSsoUser::class, fn (Application $app): ResolvesLinkadoSsoUser => $app->make(Linkado::class));
 
+        $this->app->bind(TrackingGate::class, fn (Application $app): TrackingGate => new TrackingGate(
+            configuration: $app->make(LinkadoConfiguration::class),
+            eligibilityResolver: fn (): DeterminesLinkadoEligibility => app(DeterminesLinkadoEligibility::class),
+        ));
+
         $this->app->bind(TrackingRenderer::class, fn (Application $app): TrackingRenderer => new TrackingRenderer(
             configuration: $app->make(LinkadoConfiguration::class),
-            eligibility: $app->make(DeterminesLinkadoEligibility::class),
+            tracking: $app->make(TrackingGate::class),
             views: $app->make('view'),
             application: $app,
-            request: $app->make('request'),
         ));
     }
 
@@ -105,10 +111,14 @@ class LinkadoServiceProvider extends ServiceProvider
 
         $configuration = $this->app->make(LinkadoConfiguration::class);
 
-        EncryptCookies::except([
-            $configuration->trackingClickCookie(),
-            $configuration->trackingReferralCookie(),
-        ]);
+        try {
+            EncryptCookies::except([
+                $configuration->trackingClickCookie(),
+                $configuration->trackingReferralCookie(),
+            ]);
+        } catch (InvalidLinkadoConfiguration) {
+            // The request-time tracking gate rejects unusable cookie configuration.
+        }
 
         $router = $this->app->make(Router::class);
         $router->pushMiddlewareToGroup('web', EnsureLinkadoVisitor::class);

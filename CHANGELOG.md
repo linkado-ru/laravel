@@ -4,6 +4,31 @@ All notable changes to `linkado-ru/laravel` are documented here. The package fol
 
 ## Unreleased
 
+### Added
+
+- Optional host identity locking through `LocksLinkadoAttributionIdentity` and `AttributionIdentity`, with a new nullable `identity_hash` migration. Capture and consumption serialize with host registration on the same configured connection, preserving active ownership and rejecting closed or unresolved identities without visitor-only fallback. Call consume before host claim, including when attribution or customer events are absent. Legacy unbound rows are not backfilled; publish/apply the migration before enabling an adapter.
+
+### Security
+
+- Reject SSO redirects with user-info, unsafe characters or an unexpected HTTPS authority/port; redact SDK/resolver failures and expose successful one-time URLs only in `Location`.
+
+### Fixed
+
+- Match the actual hosted script's endpoint, program key, referral parameter and whole-day TTL attributes while preserving old markup aliases. Incompatible TTL/cookie names or missing configuration render nothing; no API token is exposed.
+
+- Validate captured and stored attribution identifiers, prefer an existing referral cookie over query, and require exact source-cookie matching during consumption. Missing, malformed, or mismatched sources return no attribution and leave a scrubbed marker until the original expiry without emitting a consumption event. Public signatures, event serialization, and schema are unchanged.
+
+- Apply host tracking eligibility consistently to capture, hosted markup, and new visitor cookies using the current request and user. Resolve policies lazily and fail closed on policy/configuration errors without swallowing downstream or database failures.
+
+- Preserve the first active attribution and its absolute expiry, allowing only referral-to-click upgrades within the original window.
+- Serialize attribution capture and consumption, handle concurrent inserts through savepoints, and retain scrubbed consumed markers until expiry to prevent recapture. Existing public signatures and schema are unchanged.
+
+### Upgrade
+
+- Publish/apply the additive identity migration before upgraded capture/consume, including visitor-only integrations. Pause affected capture/registration for schema cutover, verify health in shadow mode, then enable the optional adapter and resume. Do not backfill legacy identities or drop the column automatically on rollback.
+- The intended release category is minor: existing supported signatures/configuration/SDK constraints remain, with opt-in identity API and stricter security behavior. See [compatibility and migration notes](docs/compatibility.md). Version and publication remain pending verification.
+- Expand database regression CI to all database, attribution, outbox and delivery tests plus mandatory process concurrency. Run CI on Ubuntu only, with all PHP/dependency and server database cells required.
+
 ## 1.0.0 - 2026-09-21
 
 ### Added

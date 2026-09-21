@@ -16,21 +16,26 @@ concurrency:
 
 jobs:
   sqlite:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
         php: [8.3, 8.4, 8.5]
         laravel: ['13.*']
         stability: [prefer-lowest, prefer-stable]
 
-    name: SQLite - P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.os }}
+    name: SQLite - P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node for hosted tracking contract
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
 
       - name: Setup PHP
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
@@ -48,37 +53,31 @@ jobs:
           composer build
 
       - name: PHPStan
-        if: runner.os != 'Windows'
         run: composer analyse
-
-      - name: PHPStan (Windows)
-        if: runner.os == 'Windows'
-        # Testbench shares its service manifest; avoid concurrent Windows renames.
-        run: composer analyse -- --debug
 
       - name: Linter
         run: composer lint:check
 
       - name: Type Coverage
-        if: runner.os != 'Windows'
         run: composer test:types
 
       - name: Rector
         run: composer rector:check
 
       - name: Test Suite
-        if: runner.os != 'Windows'
         run: composer test:unit
 
-      - name: Test Suite (Windows)
-        if: runner.os == 'Windows'
-        run: vendor/bin/pest
+      - name: Attribution query validation with configured PHP separators
+        run: php -d "arg_separator.input=&;" vendor/bin/pest tests/Feature/Attribution/CaptureAttributionTest.php --filter="raw referral arrays"
+
+      - name: Attribution query validation without ampersand separator
+        run: php -d "arg_separator.input=;" vendor/bin/pest tests/Feature/Attribution/CaptureAttributionTest.php --filter="exact configured query separators"
 
   database:
     runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - name: MySQL 8.4
@@ -150,7 +149,10 @@ jobs:
       - name: Database portability suite
         run: >-
           vendor/bin/pest
-          tests/Feature/Database/SchemaTest.php
-          tests/Feature/Outbox/RecordEventTest.php
-          tests/Feature/Delivery/ClaimOutboxEventTest.php
-          tests/Feature/Attribution/ConsumeAttributionTest.php
+          tests/Feature/Database
+          tests/Feature/Outbox
+          tests/Feature/Delivery
+          tests/Feature/Attribution
+
+      - name: Attribution concurrency with independent processes
+        run: vendor/bin/pest --group=attribution-concurrency

@@ -246,6 +246,7 @@ function p18Migrate(): void
     p18EventMigration()->up();
     p18AttemptMigration()->up();
     p18AttributionMigration()->up();
+    (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
 }
 
 function p18EventMigration(): Migration
@@ -262,3 +263,26 @@ function p18AttributionMigration(): Migration
 {
     return require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php';
 }
+
+it('fails health for the missing additive identity migration and recovers after upgrade', function (): void {
+    p18Migrate();
+    // Start with the published schema only.
+    $schema = Schema::connection('linkado_health_test');
+
+    if ($schema->hasColumn('linkado_pending_attributions', 'identity_hash')) {
+        (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->down();
+    }
+    $this->artisan('linkado:health', ['--json' => true])
+        ->expectsOutput(p18Report([
+            p18Check('configuration', 'healthy'),
+            p18Check('database', 'healthy'),
+            p18Check('migrations', 'failure', 1),
+            p18Check('pending_lag', 'not_applicable'),
+            p18Check('stale_claims', 'not_applicable'),
+            p18Check('permanent_failures', 'not_applicable'),
+        ], 'failure'))
+        ->assertExitCode(2);
+    (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
+    $this->artisan('linkado:health', ['--json' => true])
+        ->expectsOutput(p18Report(p18HealthyChecks(), 'healthy'))->assertSuccessful();
+});
