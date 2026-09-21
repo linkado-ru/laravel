@@ -21,15 +21,15 @@
         "linkado-ru/php-sdk": "^1.0"
     },
     "require-dev": {
-        "larastan/larastan": "^3.9",
+        "larastan/larastan": "^3.12.2",
         "laravel/pint": "^1.29",
         "laravel/pao": "^1.0",
-        "orchestra/testbench": "^11.0",
-        "pestphp/pest": "^5.0",
-        "pestphp/pest-plugin-laravel": "^5.0",
-        "pestphp/pest-plugin-type-coverage": "^5.0",
+        "orchestra/testbench": "^11.2",
+        "pestphp/pest": "^4.0 || ^5.0",
+        "pestphp/pest-plugin-laravel": "^4.0 || ^5.0",
+        "pestphp/pest-plugin-type-coverage": "^4.0 || ^5.0",
         "phpstan/extension-installer": "^1.4",
-        "rector/rector": "^2.0"
+        "rector/rector": "^2.6.7"
     },
     "autoload": {
         "psr-4": {

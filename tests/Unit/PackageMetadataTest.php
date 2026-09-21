@@ -12,6 +12,6 @@ it('targets the locked runtime matrix', function () {
     expect($composer['name'])->toBe('linkado-ru/laravel')
         ->and($composer['require']['php'])->toBe('^8.3')
         ->and($composer['require']['illuminate/support'])->toBe('^13.0')
-        ->and($composer['require-dev']['orchestra/testbench'])->toBe('^11.0')
-        ->and($composer['require-dev']['pestphp/pest'])->toBe('^5.0');
+        ->and($composer['require-dev']['orchestra/testbench'])->toBe('^11.2')
+        ->and($composer['require-dev']['pestphp/pest'])->toBe('^4.0 || ^5.0');
 });
