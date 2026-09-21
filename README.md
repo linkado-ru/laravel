@@ -1,0 +1,320 @@
+# Linkado Laravel
+
+Laravel 13 integration for the Linkado affiliate platform. The package captures referral attribution, creates Linkado SSO links, and delivers official Linkado SDK events through a transactional outbox.
+
+## Requirements
+
+- PHP 8.3 or later
+- Laravel 13
+- a queue worker for live event delivery
+- Laravel's scheduler for automatic recovery and attribution pruning
+
+## Installation
+
+Install the package through Composer:
+
+```bash
+composer require linkado-ru/laravel
+php artisan linkado:install
+php artisan migrate
+```
+
+`linkado:install` publishes configuration, migrations, and translations. It is idempotent and does not run migrations. Use `php artisan linkado:install --force` only when you intend to overwrite already-published files.
+
+The equivalent publish tags are:
+
+```bash
+php artisan vendor:publish --tag=linkado
+php artisan vendor:publish --tag=linkado-config
+php artisan vendor:publish --tag=linkado-migrations
+php artisan vendor:publish --tag=linkado-lang
+```
+
+## Configuration
+
+Start disabled, add the credential and public program key supplied by Linkado, then enable only the features the application has integrated:
+
+```dotenv
+LINKADO_MODE=shadow
+LINKADO_TOKEN=integration-credential
+LINKADO_PROGRAM_KEY=program-public-key
+LINKADO_CUSTOMER_EVENTS_ENABLED=true
+```
+
+Never commit the credential. `shadow` mode is recommended while validating an integration because it records terminal local snapshots without sending outbox events. Tracking and SSO still follow their feature flags in shadow mode.
+
+Every package configuration key is listed below. Values without an environment variable are intentionally changed in `config/linkado.php` after publishing.
+
+| Configuration key | Environment variable / default | Purpose |
+| --- | --- | --- |
+| `linkado.mode` | `LINKADO_MODE=off` | Delivery mode: `off`, `shadow`, or `live`. |
+| `linkado.connection` | `LINKADO_DB_CONNECTION=null` | Database connection that owns the host transaction and Linkado tables. `null` uses the default connection. |
+| `linkado.queue` | `LINKADO_QUEUE=null` | Queue name for delivery jobs. `null` uses the connection's default queue. |
+| `linkado.base_url` | `LINKADO_BASE_URL=https://app.linkado.ru/api/v1` | HTTPS Linkado API base URL without userinfo, query, or fragment. |
+| `linkado.token` | `LINKADO_TOKEN=null` | Bearer credential used only when an SDK request is made. |
+| `linkado.program_key` | `LINKADO_PROGRAM_KEY=null` | Public Linkado program key included in events and SSO requests. |
+| `linkado.features.sso` | `LINKADO_SSO_ENABLED=false` | Enables SSO launches. |
+| `linkado.features.tracking` | `LINKADO_TRACKING_ENABLED=false` | Enables tracking rendering and attribution capture. |
+| `linkado.features.customer_events` | `LINKADO_CUSTOMER_EVENTS_ENABLED=false` | Enables customer-created and lead-created events. |
+| `linkado.features.billing_events` | `LINKADO_BILLING_EVENTS_ENABLED=false` | Enables payment and subscription events. |
+| `linkado.features.refund_events` | `LINKADO_REFUND_EVENTS_ENABLED=false` | Enables payment-refunded events. |
+| `linkado.tracking.script_url` | `LINKADO_TRACKING_SCRIPT_URL=null` | Hosted tracking script URL. Required when tracking is rendered. |
+| `linkado.tracking.endpoint_url` | `LINKADO_TRACKING_ENDPOINT_URL=null` | Hosted tracking endpoint exposed to the script. Required when tracking is rendered. |
+| `linkado.tracking.referral_parameter` | `LINKADO_REFERRAL_PARAMETER=ref` | Referral query-string parameter. |
+| `linkado.tracking.visitor_cookie` | `linkado_visitor` | Encrypted package visitor cookie name. |
+| `linkado.tracking.click_cookie` | `lk_click` | Hosted script click-cookie name. |
+| `linkado.tracking.referral_cookie` | `lk_referral` | Hosted script referral-cookie name. |
+| `linkado.tracking.ttl_seconds` | `LINKADO_ATTRIBUTION_TTL_SECONDS=2592000` | Pending attribution lifetime in seconds. |
+| `linkado.sso.route` | `linkado.sso.launch` | Name of the package's SSO POST route. |
+| `linkado.sso.middleware` | `web`, `auth`, `throttle:6,1` | Middleware protecting SSO launches. |
+| `linkado.sso.error_redirect` | `/` | Local path after an SSO failure; unsafe values fall back to `/`. |
+| `linkado.delivery.max_attempts` | `8` | Maximum automatic delivery attempts. |
+| `linkado.delivery.claim_timeout_seconds` | `600` | Time before an in-progress delivery claim is stale. |
+| `linkado.delivery.base_delay_seconds` | `60` | Initial retry delay. |
+| `linkado.delivery.max_delay_seconds` | `21600` | Maximum retry delay. |
+| `linkado.delivery.retry_window_seconds` | `86400` | Maximum event age for automatic retries. |
+
+## Delivery modes and features
+
+`LINKADO_MODE` is an operational safety switch:
+
+- `off` returns `null` without constructing an SDK event or writing a package row.
+- `shadow` stores an immutable, terminal local snapshot and never dispatches HTTP delivery.
+- `live` stores a pending event and dispatches its queue job only after the host transaction commits.
+
+Feature flags are evaluated after the SDK DTO identifies its event family. The default eligibility policy allows enabled features. Applications can replace it with the `DeterminesLinkadoEligibility` contract:
+
+```php
+<?php
+
+namespace App\Linkado;
+
+use Linkado\Laravel\Contracts\DeterminesLinkadoEligibility;
+use Linkado\Laravel\Enums\LinkadoFeature;
+use Linkado\Laravel\Support\EligibilityContext;
+
+final class LinkadoEligibility implements DeterminesLinkadoEligibility
+{
+    public function allows(LinkadoFeature $feature, EligibilityContext $context): bool
+    {
+        return ! app()->environment('testing');
+    }
+}
+```
+
+Bind it in an application service provider:
+
+```php
+use App\Linkado\LinkadoEligibility;
+use Linkado\Laravel\Contracts\DeterminesLinkadoEligibility;
+
+$this->app->singleton(
+    DeterminesLinkadoEligibility::class,
+    LinkadoEligibility::class,
+);
+```
+
+Eligibility exceptions fail closed: the package does not write or deliver the event.
+
+## Attribution and event recording
+
+Apply the `linkado.attribution` middleware to public landing routes that should capture Linkado click or referral values:
+
+```php
+use Illuminate\Support\Facades\Route;
+
+Route::middleware(['web', 'linkado.attribution'])->group(function (): void {
+    Route::get('/pricing', fn () => view('pricing'));
+    Route::get('/register', fn () => view('auth.register'));
+});
+```
+
+The package manages its encrypted visitor cookie on the `web` middleware group. Capture gives click IDs precedence over referral slugs and stores only a SHA-256 visitor hash in the database.
+
+Consume attribution and record the related SDK event inside the same transaction and on the connection configured by `linkado.connection`:
+
+```php
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Linkado\Laravel\Facades\Linkado;
+use Linkado\PhpSdk\DataObjects\CustomerCreatedEventData;
+
+DB::connection(config('linkado.connection'))->transaction(
+    function () use ($request, $customer): void {
+        /** @var Request $request */
+        $attribution = Linkado::attribution()->consume($request);
+
+        Linkado::record(
+            sourceKey: 'customer-created:'.$customer->getKey(),
+            eventFactory: fn (string $eventId): CustomerCreatedEventData => new CustomerCreatedEventData(
+                event_id: $eventId,
+                program_key: (string) config('linkado.program_key'),
+                occurred_at: now(),
+                external_customer_id: (string) $customer->getKey(),
+                click_id: $attribution?->clickId,
+                referral_slug: $attribution?->clickId === null
+                    ? $attribution?->referralSlug
+                    : null,
+            ),
+        );
+    },
+);
+```
+
+The source key is the application's idempotency key. Repeating the same source key and payload returns the original row; reusing it for a different payload preserves the first row and emits a critical diagnostic event. Do not put email addresses, phone numbers, credentials, or other secrets in source keys.
+
+Use the official `linkado-ru/php-sdk` DTOs for all supported event types:
+
+- `CustomerCreatedEventData` and `LeadCreatedEventData`
+- `PaymentSucceededEventData`
+- `SubscriptionRenewedEventData` and `SubscriptionCancelledEventData`
+- `PaymentRefundedEventData`
+
+Amounts are positive integers in minor currency units. Never construct a package-specific replacement DTO, generate your own event ID inside the factory, or call Linkado HTTP APIs inside the host transaction.
+
+## Tracking
+
+Set the tracking feature and hosted URLs, then render the directive once in the page layout:
+
+```dotenv
+LINKADO_TRACKING_ENABLED=true
+LINKADO_TRACKING_SCRIPT_URL=https://cdn.example.test/linkado.js
+LINKADO_TRACKING_ENDPOINT_URL=https://tracking.example.test/events
+```
+
+```blade
+<!doctype html>
+<html lang="en">
+    <head>
+        @linkadoTracking
+    </head>
+    <body>
+        {{ $slot }}
+    </body>
+</html>
+```
+
+The directive renders nothing when mode is `off`, tracking is disabled, or eligibility denies the request. Its two URLs must use HTTPS outside local/testing environments.
+
+## SSO
+
+SSO is exposed only as the named POST route `linkado.sso.launch`. Launch it from a CSRF-protected form; do not link to the endpoint with GET:
+
+```blade
+<form method="POST" action="{{ route('linkado.sso.launch') }}">
+    @csrf
+    <button type="submit">Open Linkado</button>
+</form>
+```
+
+The default middleware is `web`, `auth`, and `throttle:6,1`. Before enabling SSO, bind `ResolvesLinkadoSsoUser` to an application adapter:
+
+```php
+<?php
+
+namespace App\Linkado;
+
+use Illuminate\Contracts\Auth\Authenticatable;
+use Linkado\Laravel\Contracts\ResolvesLinkadoSsoUser;
+use Linkado\Laravel\Support\ResolvedSsoUser;
+use Linkado\PhpSdk\Enums\SsoRedirect;
+
+final class LinkadoSsoUserResolver implements ResolvesLinkadoSsoUser
+{
+    public function resolve(Authenticatable $user): ResolvedSsoUser
+    {
+        return new ResolvedSsoUser(
+            externalUserId: (string) $user->getAuthIdentifier(),
+            email: null,
+            emailVerified: false,
+            displayName: (string) $user->getAuthIdentifier(),
+            redirectTo: SsoRedirect::AffiliatePortal,
+        );
+    }
+}
+```
+
+```php
+use App\Linkado\LinkadoSsoUserResolver;
+use Linkado\Laravel\Contracts\ResolvesLinkadoSsoUser;
+
+$this->app->singleton(
+    ResolvesLinkadoSsoUser::class,
+    LinkadoSsoUserResolver::class,
+);
+```
+
+Adapt the resolver to the host user model and supply verified email/display-name values where available. SSO performs its SDK request outside a database transaction. Failures return to `linkado.sso.error_redirect` with a translated validation error, and the one-time URL is never stored in the session or package tables.
+
+## Queues and scheduler
+
+Live delivery uses the application's queue connection. If `LINKADO_QUEUE=linkado`, run a worker that consumes that queue:
+
+```bash
+php artisan queue:work --queue=linkado
+```
+
+If `LINKADO_QUEUE` is unset, the job uses the connection's default queue. Horizon is optional; no dedicated Linkado worker implementation is required.
+
+The service provider registers these overlap-protected schedules automatically:
+
+- `linkado:recover` every five minutes
+- `linkado:prune` daily
+
+Run Laravel's scheduler in production and a worker locally when needed:
+
+```bash
+php artisan schedule:run
+php artisan schedule:work
+```
+
+Only one scheduler command is needed on each invocation; the second form is intended for a long-running local process. Multi-node deployments should use a shared cache store so Laravel's overlap locks are shared.
+
+## Operator commands
+
+| Command | Purpose |
+| --- | --- |
+| `php artisan linkado:install [--force]` | Publish package resources without running migrations. |
+| `php artisan linkado:health [--json]` | Check configuration, database access, migrations, queue lag, stale claims, and terminal failures. |
+| `php artisan linkado:diagnose [--json]` | Report pending, stale, conflicting, exhausted, and corrupt events without changing state. |
+| `php artisan linkado:recover [--json]` | Queue due or stalled delivery for recovery. |
+| `php artisan linkado:retry {event} --operator= --reason= [--json]` | Retry one eligible failed event and record the operator audit fields. |
+| `php artisan linkado:prune [--json]` | Delete expired pending attribution. |
+
+Use `--json` for monitoring and automation. `linkado:health` exits non-zero when a failure check is present. Inspect with `linkado:diagnose` before manual retry; corrupt payloads and idempotency conflicts cannot be retried safely.
+
+## Failure handling
+
+The package persists exact JSON bytes and their SHA-256 hash, then rehydrates the same official SDK DTO for every attempt. Network failures, HTTP 408/429/5xx responses, and valid `Retry-After` values use bounded retries. Stable 4xx responses, HTTP 409 payload conflicts, attempt exhaustion, retry-window expiry, corruption, and disabling the package terminate delivery deterministically.
+
+Automatic delivery is limited by `linkado.delivery.max_attempts` and `linkado.delivery.retry_window_seconds`. Recovery handles dispatch failures, stale claims, and lost queued jobs after the queue uniqueness lease expires (the configured claim timeout). A late worker cannot overwrite a newer claim. Switching from live to off or shadow prevents queued event delivery. A manual retry requires both `--operator` and `--reason`, never alters the original event ID or payload, and leaves an audit attempt. It authorizes one delivery even after automatic limits have expired; an abandoned manual attempt does not authorize unlimited recovery attempts.
+
+Listen to package lifecycle events for application-specific observability. Their context is intentionally sanitized; do not attach raw DTO payloads, cookies, credentials, or SSO URLs in listeners.
+
+## Privacy and data handling
+
+- Pending attribution stores a visitor hash, click/referral value, and timestamps. It stores no IP address, user agent, email, or host user foreign key.
+- Outbox rows contain the official SDK payload. Send only identifiers and metadata allowed by the SDK; never add PII or secrets.
+- Tracking cookies are package-scoped. Invalid or tampered visitor cookies are rotated without logging the raw value.
+- Credentials are resolved lazily and excluded from configuration exceptions and connector debug output.
+- SSO URLs contain one-time secrets and must not be logged, persisted, or added to analytics.
+
+Review retention requirements for the host application and keep the daily attribution prune schedule active.
+
+## Upgrading
+
+The package follows Semantic Versioning. Within 1.x, additive configuration and migration changes may require publishing new resources; breaking public API changes are reserved for a new major version.
+
+Before upgrading:
+
+1. Read [CHANGELOG.md](CHANGELOG.md).
+2. Run `composer update linkado-ru/laravel linkado-ru/php-sdk` in a branch.
+3. Compare the published `config/linkado.php` with the package default instead of overwriting local values blindly.
+4. Publish any new migrations with `php artisan vendor:publish --tag=linkado-migrations` and run the application's normal migration process.
+5. Run the application test suite and `php artisan linkado:health --json` before enabling `live` mode.
+
+## Development
+
+See [the contribution guide](.github/CONTRIBUTING.md) for local validation and pull-request requirements. Security reports follow [the security policy](.github/SECURITY.md).
+
+Linkado Laravel is open-source software licensed under the [MIT license](LICENSE.md).

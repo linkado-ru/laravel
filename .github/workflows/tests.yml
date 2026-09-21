@@ -1,0 +1,151 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+      - '*.x'
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sqlite:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        php: [8.3, 8.4, 8.5]
+        laravel: ['13.*']
+        testbench: ['11.*']
+        stability: [prefer-lowest, prefer-stable]
+
+    name: SQLite - P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: dom, curl, libxml, mbstring, zip, fileinfo, sqlite, pdo_sqlite, bcmath, intl
+          ini-values: error_reporting=E_ALL
+          tools: composer:v2
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
+          composer update --${{ matrix.stability }} --prefer-dist --no-interaction --no-progress --no-scripts
+          composer run prepare
+
+      - name: PHPStan
+        run: composer analyse
+
+      - name: Linter
+        run: composer lint:check
+
+      - name: Type Coverage
+        if: runner.os != 'Windows'
+        run: composer test:types
+
+      - name: Rector
+        run: composer rector:check
+
+      - name: Test Suite
+        if: runner.os != 'Windows'
+        run: composer test:unit
+
+      - name: Test Suite (Windows)
+        if: runner.os == 'Windows'
+        run: vendor/bin/pest
+
+  database:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: MySQL 8.4
+            image: mysql:8.4
+            driver: mysql
+            port: 3306
+            username: root
+            health: mysqladmin ping --host=127.0.0.1 --password=password
+          - name: MariaDB 11.4
+            image: mariadb:11.4
+            driver: mysql
+            port: 3306
+            username: root
+            health: healthcheck.sh --connect --innodb_initialized
+          - name: PostgreSQL 17
+            image: postgres:17
+            driver: pgsql
+            port: 5432
+            username: postgres
+            health: pg_isready --username=postgres --dbname=linkado_test
+
+    name: ${{ matrix.name }} - P8.5
+
+    services:
+      database:
+        image: ${{ matrix.image }}
+        env:
+          MYSQL_DATABASE: linkado_test
+          MYSQL_ROOT_PASSWORD: password
+          MARIADB_DATABASE: linkado_test
+          MARIADB_ROOT_PASSWORD: password
+          POSTGRES_DB: linkado_test
+          POSTGRES_PASSWORD: password
+        ports:
+          - "${{ matrix.port }}:${{ matrix.port }}"
+        options: >-
+          --health-cmd="${{ matrix.health }}"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      LINKADO_TEST_DB_DRIVER: ${{ matrix.driver }}
+      LINKADO_TEST_DB_HOST: 127.0.0.1
+      LINKADO_TEST_DB_PORT: ${{ matrix.port }}
+      LINKADO_TEST_DB_DATABASE: linkado_test
+      LINKADO_TEST_DB_USERNAME: ${{ matrix.username }}
+      LINKADO_TEST_DB_PASSWORD: password
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: 8.5
+          extensions: dom, curl, libxml, mbstring, zip, fileinfo, sqlite, pdo_sqlite, pdo_mysql, pdo_pgsql, bcmath, intl
+          ini-values: error_reporting=E_ALL
+          tools: composer:v2
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer require "laravel/framework:13.*" "orchestra/testbench:11.*" --no-interaction --no-update
+          composer update --prefer-stable --prefer-dist --no-interaction --no-progress --no-scripts
+          composer run prepare
+
+      - name: Database portability suite
+        run: >-
+          vendor/bin/pest
+          tests/Feature/Database/SchemaTest.php
+          tests/Feature/Outbox/RecordEventTest.php
+          tests/Feature/Delivery/ClaimOutboxEventTest.php
+          tests/Feature/Attribution/ConsumeAttributionTest.php

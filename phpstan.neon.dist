@@ -1,0 +1,10 @@
+parameters:
+    level: max
+    configDirectories:
+        - config
+    paths:
+        - src
+        - config
+        - database
+        - routes
+    tmpDir: build/phpstan

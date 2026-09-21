@@ -1,0 +1,19 @@
+/vendor
+/build
+/.phpunit.cache
+/.phpunit.result.cache
+/.superpowers
+/coverage
+composer.lock
+.phpunit.cache
+.phpunit.result.cache
+.DS_Store
+.idea
+.vscode
+
+# Local planning and agent configuration
+/.agents
+/.claude
+/AGENTS.md
+/CLAUDE.md
+/docs/superpowers
