@@ -153,7 +153,7 @@ it('never downgrades an existing click to a referral slug', function (): void {
         ->and(p11AttributionCount())->toBe(1);
 });
 
-it('refreshes capture and expiry timestamps from the configured ttl', function (): void {
+it('starts a new window after expiry without retaining the old click', function (): void {
     $visitorId = strtolower((string) Str::ulid());
     CarbonImmutable::setTestNow('2026-09-21 10:00:00');
 
@@ -165,13 +165,16 @@ it('refreshes capture and expiry timestamps from the configured ttl', function (
     CarbonImmutable::setTestNow('2026-09-21 11:00:00');
 
     $this->withCookie('linkado_visitor', $visitorId)
-        ->withUnencryptedCookie('lk_referral', 'must-not-downgrade')
+        ->withUnencryptedCookie('lk_click', '')
+        ->withUnencryptedCookie('lk_referral', 'new-partner')
         ->get('/_linkado-tests/attribution')
         ->assertOk();
 
     $row = p11AttributionRow();
 
-    expect(CarbonImmutable::parse((string) $row?->captured_at)->equalTo(now()))->toBeTrue()
+    expect($row?->click_id)->toBeNull()
+        ->and($row?->referral_slug)->toBe('new-partner')
+        ->and(CarbonImmutable::parse((string) $row?->captured_at)->equalTo(now()))->toBeTrue()
         ->and(CarbonImmutable::parse((string) $row?->expires_at)->equalTo(now()->addSeconds(120)))->toBeTrue();
 });
 

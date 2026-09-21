@@ -1,0 +1,189 @@
+<?php
+
+declare(strict_types=1);
+
+use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Linkado\Laravel\Actions\CapturePendingAttribution;
+use Linkado\Laravel\Tests\Support\Attribution\ConcurrentWorker;
+use Linkado\Laravel\Tests\Support\DatabaseConfiguration;
+
+uses()->group('attribution-concurrency');
+
+beforeEach(function (): void {
+    $configuration = DatabaseConfiguration::externalOrSqlite();
+
+    if (! in_array($configuration['driver'], ['mysql', 'pgsql'], true)) {
+        throw new RuntimeException('Attribution concurrency requires a disposable MySQL or PostgreSQL database.');
+    }
+    config()->set('database.connections.attribution_race', $configuration);
+    config()->set('linkado.connection', 'attribution_race');
+    config()->set('linkado.tracking.ttl_seconds', 120);
+    DB::purge('attribution_race');
+    (require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php')->up();
+    $this->raceSchemaCreated = true;
+    CarbonImmutable::setTestNow('2026-09-21 10:00:00');
+    $this->workers = [];
+});
+
+afterEach(function (): void {
+    foreach ($this->workers ?? [] as $worker) {
+        $worker->close();
+    }
+    CarbonImmutable::setTestNow();
+
+    if ($this->raceSchemaCreated ?? false) {
+        (require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php')->down();
+        DB::purge('attribution_race');
+    }
+});
+
+it('serializes two captures of a missing row at the engine default isolation', function (): void {
+    $visitor = (string) Str::ulid();
+    $a = raceWorker($this, ['visitor' => $visitor, 'operation' => 'capture', 'slug' => 'first', 'before' => 'insert']);
+    $a->await('before');
+    $b = raceWorker($this, ['visitor' => $visitor, 'operation' => 'capture', 'slug' => 'second', 'before' => 'insert']);
+    $b->await('before');
+    $a->release();
+    $b->release();
+    $a->await('done');
+    $b->await('done');
+    $row = DB::connection('attribution_race')->table('linkado_pending_attributions')->sole();
+    expect($row->referral_slug)->toBeIn(['first', 'second'])
+        ->and($row->click_id)->toBeNull()
+        ->and($row->captured_at)->toBe('2026-09-21 10:00:00')
+        ->and($row->expires_at)->toBe('2026-09-21 10:02:00');
+});
+
+it('recovers a real insert conflict through a savepoint and reads the committed winner', function (string $prefix): void {
+    if ($prefix !== '') {
+        $migration = require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php';
+        $migration->down();
+        config()->set('database.connections.attribution_race.prefix', $prefix);
+        DB::purge('attribution_race');
+        $migration->up();
+    }
+    $visitor = (string) Str::ulid();
+    $b = raceWorker($this, ['visitor' => $visitor, 'operation' => 'capture', 'slug' => 'loser', 'before' => 'insert', 'isolation' => 'read-committed', 'now' => '2026-09-21 10:01:00', 'outer' => true, 'prefix' => $prefix]);
+    $b->await('before');
+    $a = raceWorker($this, ['visitor' => $visitor, 'operation' => 'capture', 'slug' => 'winner', 'hold' => true, 'isolation' => 'read-committed', 'prefix' => $prefix]);
+    $a->await('holding');
+    $b->release();
+    raceAwaitBlocked($b->session, $a->session);
+    $a->release();
+    $a->await('done');
+    $b->await('done');
+    $row = DB::connection('attribution_race')->table('linkado_pending_attributions')->sole();
+    expect($row->referral_slug)->toBe('winner')
+        ->and($row->captured_at)->toBe('2026-09-21 10:00:00')
+        ->and($row->expires_at)->toBe('2026-09-21 10:02:00');
+})->with(fn (): array => array_merge(['', 'p3_', 'P3_', 'p3-'], getenv('LINKADO_TEST_DB_DRIVER') === 'pgsql' ? ['tenant_shared_app_'] : []));
+
+it('serializes upgrades and consumers while preserving one window and one snapshot', function (
+    string $firstOperation, ?string $firstClick, string $secondOperation, ?string $secondClick,
+    ?string $expectedClick, ?string $expectedSlug, int $snapshots,
+): void {
+    $visitor = (string) Str::ulid();
+    app(CapturePendingAttribution::class)->handle($visitor, null, 'original');
+    $a = raceWorker($this, ['visitor' => $visitor, 'operation' => $firstOperation, 'click' => $firstClick, 'hold' => true, 'now' => '2026-09-21 10:00:30']);
+    $a->await('holding');
+    $b = raceWorker($this, ['visitor' => $visitor, 'operation' => $secondOperation, 'click' => $secondClick, 'before' => 'select', 'now' => '2026-09-21 10:01:00']);
+    $b->await('before');
+    $b->release();
+    raceAwaitBlocked($b->session, $a->session);
+    $a->release();
+    $first = $a->await('done');
+    $second = $b->await('done');
+    $row = DB::connection('attribution_race')->table('linkado_pending_attributions')->sole();
+    expect($row->click_id)->toBe($expectedClick)->and($row->referral_slug)->toBe($expectedSlug)
+        ->and($row->captured_at)->toBe('2026-09-21 10:00:00')
+        ->and($row->expires_at)->toBe('2026-09-21 10:02:00')
+        ->and(count(array_filter([$first['snapshot'], $second['snapshot']])))->toBe($snapshots)
+        ->and($first['events'] + $second['events'])->toBe($snapshots);
+
+    if ($snapshots === 1) {
+        expect($row->consumed_at)->not->toBeNull();
+        expect($first['snapshot'] ?? $second['snapshot'])->toBe($firstOperation === 'capture'
+            ? ['click' => 'first-click', 'slug' => null] : ['click' => null, 'slug' => 'original']);
+    }
+})->with([
+    'two upgrades' => ['capture', 'first-click', 'capture', 'second-click', 'first-click', null, 0],
+    'upgrade then consume' => ['capture', 'first-click', 'consume', null, null, null, 1],
+    'consume then capture' => ['consume', null, 'capture', 'second-click', null, null, 1],
+    'two consumers' => ['consume', null, 'consume', null, null, null, 1],
+]);
+
+it('uses the time after waiting for the row lock to decide expiry', function (string $operation): void {
+    $visitor = (string) Str::ulid();
+    app(CapturePendingAttribution::class)->handle($visitor, null, 'original');
+    $a = raceWorker($this, ['visitor' => $visitor, 'operation' => 'capture', 'click' => 'upgrade', 'hold' => true]);
+    $a->await('holding');
+    $b = raceWorker($this, [
+        'visitor' => $visitor, 'operation' => $operation, 'slug' => 'new-window', 'before' => 'select',
+        'now' => '2026-09-21 10:01:59', 'after_lock_now' => '2026-09-21 10:02:00',
+    ]);
+    $b->await('before');
+    $b->release();
+    raceAwaitBlocked($b->session, $a->session);
+    $a->release();
+    $a->await('done');
+    $result = $b->await('done');
+    expect($result['snapshot'])->toBeNull()->and($result['events'])->toBe(0);
+
+    if ($operation === 'capture') {
+        $row = DB::connection('attribution_race')->table('linkado_pending_attributions')->sole();
+        expect($row->click_id)->toBeNull()->and($row->referral_slug)->toBe('new-window')
+            ->and($row->captured_at)->toBe('2026-09-21 10:02:00')
+            ->and($row->expires_at)->toBe('2026-09-21 10:04:00');
+    } else {
+        expect(DB::connection('attribution_race')->table('linkado_pending_attributions')->count())->toBe(0);
+    }
+})->with(['capture', 'consume']);
+
+it('makes a rolled back consumer snapshot available to the waiting consumer', function (): void {
+    $visitor = (string) Str::ulid();
+    app(CapturePendingAttribution::class)->handle($visitor, null, 'original');
+    $a = raceWorker($this, ['visitor' => $visitor, 'operation' => 'consume', 'hold' => true, 'rollback' => true]);
+    $a->await('holding');
+    $b = raceWorker($this, ['visitor' => $visitor, 'operation' => 'consume', 'before' => 'select']);
+    $b->await('before');
+    $b->release();
+    raceAwaitBlocked($b->session, $a->session);
+    $a->release();
+    $first = $a->await('done');
+    $second = $b->await('done');
+    expect($first['events'])->toBe(0)->and($second['events'])->toBe(1)
+        ->and($second['snapshot'])->toBe(['click' => null, 'slug' => 'original']);
+});
+
+/** @param array<string, mixed> $options */
+function raceWorker(object $test, array $options): ConcurrentWorker
+{
+    $worker = new ConcurrentWorker($options);
+    $test->workers[] = $worker;
+
+    return $worker;
+}
+
+function raceAwaitBlocked(int $waiting, int $blocking): void
+{
+    $connection = DB::connection('attribution_race');
+    $mariaDb = str_contains((string) $connection->selectOne('SELECT VERSION() AS version')->version, 'MariaDB');
+    $deadline = microtime(true) + 10;
+    do {
+        $row = $connection->getDriverName() === 'pgsql'
+            ? $connection->selectOne('SELECT ? = ANY(pg_blocking_pids(?)) AS blocked', [$blocking, $waiting])
+            : ($mariaDb
+                ? $connection->selectOne('SELECT COUNT(*) AS blocked FROM information_schema.INNODB_LOCK_WAITS w JOIN information_schema.INNODB_TRX r ON r.trx_id = w.requesting_trx_id JOIN information_schema.INNODB_TRX b ON b.trx_id = w.blocking_trx_id WHERE r.trx_mysql_thread_id = ? AND b.trx_mysql_thread_id = ?', [$waiting, $blocking])
+                : $connection->selectOne('SELECT COUNT(*) AS blocked FROM performance_schema.data_lock_waits w JOIN performance_schema.threads r ON r.THREAD_ID = w.REQUESTING_THREAD_ID JOIN performance_schema.threads b ON b.THREAD_ID = w.BLOCKING_THREAD_ID WHERE r.PROCESSLIST_ID = ? AND b.PROCESSLIST_ID = ?', [$waiting, $blocking]));
+
+        if ((bool) $row->blocked) {
+            expect((bool) $row->blocked)->toBeTrue();
+
+            return;
+        }
+    } while (microtime(true) < $deadline);
+
+    throw new RuntimeException('No database lock wait observed between the independent workers.');
+}

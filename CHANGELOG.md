@@ -4,6 +4,11 @@ All notable changes to `linkado-ru/laravel` are documented here. The package fol
 
 ## Unreleased
 
+### Fixed
+
+- Preserve the first active attribution and its absolute expiry, allowing only referral-to-click upgrades within the original window.
+- Serialize attribution capture and consumption, handle concurrent inserts through savepoints, and retain scrubbed consumed markers until expiry to prevent recapture. Existing public signatures and schema are unchanged.
+
 ## 1.0.0 - 2026-09-21
 
 ### Added

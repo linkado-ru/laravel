@@ -53,6 +53,25 @@ it('prunes only expired attribution and leaves delivery retention untouched', fu
         ->and($connection->table('linkado_outbox_attempts')->where('id', $attemptId)->exists())->toBeTrue();
 });
 
+it('retains scrubbed markers until their original expiry including the exact boundary', function (): void {
+    CarbonImmutable::setTestNow('2026-09-21 12:00:00');
+    $connection = DB::connection('linkado_test');
+    $expired = (string) Str::ulid();
+    $boundary = (string) Str::ulid();
+    $active = (string) Str::ulid();
+    p12InsertPruneAttribution($expired, now()->subSecond());
+    p12InsertPruneAttribution($boundary, now());
+    p12InsertPruneAttribution($active, now()->addSecond());
+    $connection->table('linkado_pending_attributions')->update([
+        'click_id' => null,
+        'referral_slug' => null,
+        'consumed_at' => now()->subMinute(),
+    ]);
+
+    $this->artisan('linkado:prune', ['--json' => true])->expectsOutput('{"pruned":2}')->assertSuccessful();
+    expect($connection->table('linkado_pending_attributions')->sole()->visitor_hash)->toBe(hash('sha256', $active));
+});
+
 it('reports a stable JSON zero result', function (): void {
     $this->artisan('linkado:prune', ['--json' => true])
         ->expectsOutput('{"pruned":0}')

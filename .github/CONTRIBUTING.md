@@ -33,6 +33,15 @@ composer build
 git diff --check
 ```
 
+The `attribution-concurrency` group requires a disposable MySQL/PostgreSQL database and independent PHP processes. It is excluded from the default SQLite suite and runs explicitly in every database CI job:
+
+```bash
+LINKADO_TEST_DB_DRIVER=mysql vendor/bin/pest --group=attribution-concurrency
+LINKADO_TEST_DB_DRIVER=pgsql vendor/bin/pest --group=attribution-concurrency
+```
+
+Supply `LINKADO_TEST_DB_HOST`, `LINKADO_TEST_DB_PORT`, `LINKADO_TEST_DB_DATABASE`, `LINKADO_TEST_DB_USERNAME`, and `LINKADO_TEST_DB_PASSWORD` through the environment. An explicitly empty password is respected. Use only disposable test databases: the suite creates and drops package tables. The test account must be able to inspect lock waits (`performance_schema` for MySQL, `information_schema.INNODB_LOCK_WAITS` for MariaDB, `pg_blocking_pids` for PostgreSQL). Selecting this group without a server database fails rather than skips. Workers use pipe barriers and observed database lock waits, without timing sleeps.
+
 Use `vendor/bin/pint --dirty --format agent` after PHP changes. The CI matrix supplies lowest/stable dependency, Windows, PHP-version, and external-database coverage that may not be available locally.
 
 ## Pull requests

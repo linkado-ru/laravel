@@ -129,7 +129,7 @@ Route::middleware(['web', 'linkado.attribution'])->group(function (): void {
 });
 ```
 
-The package manages its encrypted visitor cookie on the `web` middleware group. Capture gives click IDs precedence over referral slugs and stores only a SHA-256 visitor hash in the database.
+The package manages its encrypted visitor cookie on the `web` middleware group. Capture gives click IDs precedence over referral slugs and stores only a SHA-256 visitor hash in the database. The first active touch fixes the attribution window: later captures do not replace it or extend its TTL. A referral slug may upgrade to a click, retaining the original capture and expiry times. At expiry (including the exact boundary), a new touch starts a new window.
 
 Consume attribution and record the related SDK event inside the same transaction and on the connection configured by `linkado.connection`:
 
@@ -160,6 +160,8 @@ DB::connection(config('linkado.connection'))->transaction(
     },
 );
 ```
+
+Successful consumption returns attribution once and clears its click/referral values. A consumed marker remains until the original expiry, preventing another capture in that window; the daily prune removes expired markers. Consumption and its after-commit event roll back with the caller transaction. No migration is required for these storage semantics.
 
 The source key is the application's idempotency key. Repeating the same source key and payload returns the original row; reusing it for a different payload preserves the first row and emits a critical diagnostic event. Do not put email addresses, phone numbers, credentials, or other secrets in source keys.
 

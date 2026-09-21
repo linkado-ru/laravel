@@ -40,19 +40,27 @@ final readonly class ConsumePendingAttribution
             return null;
         }
 
-        $deleted = $connection->table('linkado_pending_attributions')
-            ->where('id', $row->id)
-            ->delete();
-
         $expiresAt = $row->expires_at;
+        $consumedAt = CarbonImmutable::now();
 
-        if ($deleted !== 1
-            || (! is_string($expiresAt) && ! $expiresAt instanceof DateTimeInterface)
-            || CarbonImmutable::parse($expiresAt)->lessThanOrEqualTo(now())) {
+        if ((! is_string($expiresAt) && ! $expiresAt instanceof DateTimeInterface)
+            || CarbonImmutable::parse($expiresAt)->lessThanOrEqualTo($consumedAt)) {
+            $connection->table('linkado_pending_attributions')->where('id', $row->id)->delete();
+
             return null;
         }
 
-        $consumedAt = CarbonImmutable::now();
+        if ($row->consumed_at !== null) {
+            return null;
+        }
+
+        $connection->table('linkado_pending_attributions')->where('id', $row->id)->update([
+            'click_id' => null,
+            'referral_slug' => null,
+            'consumed_at' => $consumedAt,
+            'updated_at' => $consumedAt,
+        ]);
+
         $connection->afterCommit(fn (): mixed => $this->events->dispatch(new AttributionConsumed($consumedAt)));
 
         return new ConsumedAttribution(

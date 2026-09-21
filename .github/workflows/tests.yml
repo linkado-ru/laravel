@@ -159,4 +159,7 @@ jobs:
           tests/Feature/Database/SchemaTest.php
           tests/Feature/Outbox/RecordEventTest.php
           tests/Feature/Delivery/ClaimOutboxEventTest.php
-          tests/Feature/Attribution/ConsumeAttributionTest.php
+          tests/Feature/Attribution
+
+      - name: Attribution concurrency with independent processes
+        run: vendor/bin/pest --group=attribution-concurrency
