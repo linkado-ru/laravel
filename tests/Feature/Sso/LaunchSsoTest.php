@@ -130,6 +130,19 @@ it('sends the exact resolved user payload outside a transaction and redirects wi
     'nullable email' => [null, false],
 ]);
 
+it('exposes the one-time SSO URL only in the successful Location header', function (): void {
+    $nonce = Str::random(40);
+    $url = 'https://linkado.test/sso/'.$nonce;
+    p13MockConnector(p13SsoResponse($url));
+
+    $response = $this->actingAs(p13User())->post('/linkado/sso');
+
+    $response->assertStatus(302)->assertRedirect($url);
+
+    expect($response->getContent())->not->toContain($nonce)
+        ->and(json_encode(session()->all(), JSON_THROW_ON_ERROR))->not->toContain($nonce);
+});
+
 it('rejects malformed insecure and wrong-host redirect URLs', function (string $url): void {
     p13MockConnector(p13SsoResponse($url));
 

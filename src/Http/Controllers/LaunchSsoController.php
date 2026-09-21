@@ -36,7 +36,7 @@ final readonly class LaunchSsoController
                 return $this->failureResponse();
             }
 
-            return redirect()->away($link->url);
+            return redirect()->away($link->url)->setContent('');
         } catch (Throwable) {
             return $this->failureResponse();
         }
