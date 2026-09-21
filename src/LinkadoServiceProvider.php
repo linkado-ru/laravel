@@ -134,7 +134,7 @@ class LinkadoServiceProvider extends ServiceProvider
             __DIR__.'/../lang' => $this->app->langPath('vendor/linkado'),
         ], ['linkado', 'linkado-lang']);
 
-        $this->publishesMigrations([
+        $this->publishes([
             __DIR__.'/../database/migrations' => database_path('migrations'),
         ], ['linkado', 'linkado-migrations']);
 

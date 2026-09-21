@@ -19,7 +19,7 @@ php artisan linkado:install
 php artisan migrate
 ```
 
-`linkado:install` publishes configuration, migrations, and translations. It is idempotent and does not run migrations. Use `php artisan linkado:install --force` only when you intend to overwrite already-published files.
+`linkado:install` publishes configuration, migrations, and translations. It is idempotent and does not run migrations. Published migration filenames remain stable, so later installs and publication do not create duplicate migrations. Use `php artisan linkado:install --force` only when you intend to overwrite already-published files.
 
 The equivalent publish tags are:
 

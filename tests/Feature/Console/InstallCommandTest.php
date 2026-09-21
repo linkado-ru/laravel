@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 beforeEach(function (): void {
     $this->files = app(Filesystem::class);
@@ -48,4 +50,50 @@ it('overwrites an existing Linkado configuration when forced', function (): void
         ->assertSuccessful();
 
     expect($this->files->get($this->publishedConfigPath))->toContain("'mode' => env('LINKADO_MODE', 'off'),");
+});
+
+it('preserves published migrations across later installation and publication', function (string $command, array $arguments): void {
+    $this->travelTo(now()->startOfDay());
+    $this->artisan('linkado:install')->assertSuccessful();
+
+    $original = glob($this->migrationPattern) ?: [];
+    expect($original)->toHaveCount(3);
+    $this->files->append($original[0], "\n// Host migration customization.\n");
+    $contents = array_map(fn (string $path): string => $this->files->get($path), $original);
+
+    $this->travel(1)->days();
+    $this->artisan($command, $arguments)->assertSuccessful();
+
+    expect(glob($this->migrationPattern))->toBe($original)
+        ->and(array_map(fn (string $path): string => $this->files->get($path), $original))->toBe($contents);
+})->with([
+    'install' => ['linkado:install', []],
+    'all resources tag' => ['vendor:publish', ['--tag' => 'linkado']],
+    'migration tag' => ['vendor:publish', ['--tag' => 'linkado-migrations']],
+]);
+
+it('can migrate before and after later installation without recreating tables', function (): void {
+    config()->set('database.connections.install_test', [
+        'driver' => 'sqlite',
+        'database' => ':memory:',
+        'prefix' => '',
+        'foreign_key_constraints' => true,
+    ]);
+    config()->set('database.default', 'install_test');
+    config()->set('linkado.connection', 'install_test');
+    DB::purge('install_test');
+
+    $this->travelTo(now()->startOfDay());
+    $this->artisan('linkado:install')->assertSuccessful();
+    $this->artisan('migrate', ['--force' => true])->assertSuccessful();
+
+    $this->travel(1)->days();
+    $this->artisan('linkado:install')->assertSuccessful();
+    $this->artisan('migrate', ['--force' => true])->assertSuccessful();
+
+    expect(glob($this->migrationPattern))->toHaveCount(3)
+        ->and(DB::table('migrations')->count())->toBe(3)
+        ->and(Schema::hasTable('linkado_outbox_events'))->toBeTrue()
+        ->and(Schema::hasTable('linkado_outbox_attempts'))->toBeTrue()
+        ->and(Schema::hasTable('linkado_pending_attributions'))->toBeTrue();
 });
