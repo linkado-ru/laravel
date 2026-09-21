@@ -229,6 +229,12 @@ function raceAwaitBlocked(int $waiting, int $blocking): void
 
             return;
         }
+
+        if ($mariaDb) {
+            // MariaDB's trx0i_s cache refresh requires >100ms without an I_S read.
+            // Poll its next snapshot; elapsed time is never accepted as lock evidence.
+            usleep(110_000);
+        }
     } while (microtime(true) < $deadline);
 
     throw new RuntimeException('No database lock wait observed between the independent workers.');

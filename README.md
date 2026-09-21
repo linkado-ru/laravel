@@ -204,6 +204,12 @@ LINKADO_TRACKING_ENDPOINT_URL=https://tracking.example.test/events
 
 The directive renders nothing when mode is `off`, tracking is disabled, or eligibility denies the request. Its two URLs must use HTTPS outside local/testing environments.
 
+The script element keeps `defer` and emits `data-endpoint`, `data-program-key`, `data-referral-param`, and `data-attribution-window-days`. Compatibility aliases `data-endpoint-url` and `data-referral-parameter` contain the same endpoint and referral parameter. Values are HTML-escaped; the API token is never rendered.
+
+Hosted rendering requires a public program key, a positive TTL that is an exact multiple of 86400 seconds, and the hosted script's fixed `lk_click` / `lk_referral` cookie names. Missing or incompatible configuration renders an empty string. The days attribute is derived from `linkado.tracking.ttl_seconds`; there is no separate browser TTL setting. Server storage still supports second-level TTL. The hosted response may change browser cookie expiry; it never extends an existing server attribution window.
+
+Validate the actual hosted URL and bytes against the tested contract before deployment, then test loading, cookies and CSP in the consuming application. A locally served asset or the package's Node VM contract suite alone does not prove production browser integration.
+
 The same tracking eligibility policy gates visitor-cookie issuance and attribution capture. It receives `LinkadoFeature::Tracking` with the current request, its current user, and no event. Mode and feature flags are checked before resolving the policy; policy resolution/evaluation failures disable tracking for that operation without breaking the host response. Invalid optional tracking configuration is also contained; downstream application and database failures still propagate. Tracking does not emit event eligibility diagnostics.
 
 Keep the resolver read-only and arrange middleware so the required authentication and impersonation context is available before visitor issuance and capture. Admin and impersonation rules belong to the application. Decisions and request/user context are evaluated on each operation, not cached by the package. This policy check alone does not serialize attribution with concurrent registration or identity claims.
@@ -299,6 +305,8 @@ $this->app->singleton(
 );
 ```
 
+Returned SSO URLs must use HTTPS with the configured hostname (case-insensitive) and effective port; omitted HTTPS port means 443. User-info, controls, backslashes and foreign authorities are rejected. SDK and resolver failures are replaced with a safe exception without an unsafe previous-exception chain. A successful one-time URL appears only in the response's `Location` header; the redirect body is empty.
+
 Adapt the resolver to the host user model and supply verified email/display-name values where available. SSO performs its SDK request outside a database transaction. Failures return to `linkado.sso.error_redirect` with a translated validation error, and the one-time URL is never stored in the session or package tables.
 
 ## Queues and scheduler
@@ -360,15 +368,21 @@ Review retention requirements for the host application and keep the daily attrib
 
 The package follows Semantic Versioning. Within 1.x, additive configuration and migration changes may require publishing new resources; breaking public API changes are reserved for a new major version.
 
+The unreleased changes since `v1.0.0` are a minor release candidate: the supported facade/contract signatures remain compatible and identity locking is opt-in. Security behavior is stricter: visitor-only consumption and malformed/mismatched source identifiers are rejected, and unsafe SSO authorities fail closed. See the [explicit API and schema diff](docs/compatibility.md).
+
+The additive identity migration is required for upgraded capture/consume **even without an identity adapter**. Pause affected capture and registration transitions before changing package code, publish/apply the migration, then verify health in `shadow` mode with features disabled before resuming. `off` health deliberately marks database checks not applicable and is not migration proof. Do not guess or backfill legacy identity associations. Disable the affected integration before rollback; do not automatically remove the column or promise the old code's lifecycle safety.
+
 Before upgrading:
 
 1. Read [CHANGELOG.md](CHANGELOG.md).
 2. Run `composer update linkado-ru/laravel linkado-ru/php-sdk` in a branch.
 3. Compare the published `config/linkado.php` with the package default instead of overwriting local values blindly.
 4. Publish any new migrations with `php artisan vendor:publish --tag=linkado-migrations` and run the application's normal migration process.
-5. Run the application test suite and `php artisan linkado:health --json` before enabling `live` mode.
+5. Run the application test suite and `php artisan linkado:health --json` in `shadow` mode before resuming capture/registration and enabling `live` mode.
 
 ## Development
+
+Required CI covers Ubuntu, PHP 8.3/8.4/8.5 with lowest/stable dependencies, and MySQL 8.4, MariaDB 11.4 and PostgreSQL 17. Windows jobs remain additional compatibility coverage; inspect their results separately.
 
 See [the contribution guide](.github/CONTRIBUTING.md) for local validation and pull-request requirements. Security reports follow [the security policy](.github/SECURITY.md).
 

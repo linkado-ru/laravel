@@ -18,15 +18,18 @@ jobs:
   sqlite:
     runs-on: ${{ matrix.os }}
 
+    # Windows is additional coverage; required Ubuntu cells must all finish.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         php: [8.3, 8.4, 8.5]
         laravel: ['13.*']
         stability: [prefer-lowest, prefer-stable]
 
-    name: SQLite - P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.os }}
+    name: SQLite - P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.os }}${{ matrix.os == 'windows-latest' && ' (additional)' || '' }}
 
     steps:
       - name: Checkout code
@@ -162,9 +165,9 @@ jobs:
       - name: Database portability suite
         run: >-
           vendor/bin/pest
-          tests/Feature/Database/SchemaTest.php
-          tests/Feature/Outbox/RecordEventTest.php
-          tests/Feature/Delivery/ClaimOutboxEventTest.php
+          tests/Feature/Database
+          tests/Feature/Outbox
+          tests/Feature/Delivery
           tests/Feature/Attribution
 
       - name: Attribution concurrency with independent processes
