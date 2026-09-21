@@ -6,6 +6,8 @@ All notable changes to `linkado-ru/laravel` are documented here. The package fol
 
 ### Fixed
 
+- Apply host tracking eligibility consistently to capture, hosted markup, and new visitor cookies using the current request and user. Resolve policies lazily and fail closed on policy/configuration errors without swallowing downstream or database failures.
+
 - Preserve the first active attribution and its absolute expiry, allowing only referral-to-click upgrades within the original window.
 - Serialize attribution capture and consumption, handle concurrent inserts through savepoints, and retain scrubbed consumed markers until expiry to prevent recapture. Existing public signatures and schema are unchanged.
 

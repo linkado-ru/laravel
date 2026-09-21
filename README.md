@@ -198,6 +198,10 @@ LINKADO_TRACKING_ENDPOINT_URL=https://tracking.example.test/events
 
 The directive renders nothing when mode is `off`, tracking is disabled, or eligibility denies the request. Its two URLs must use HTTPS outside local/testing environments.
 
+The same tracking eligibility policy gates visitor-cookie issuance and attribution capture. It receives `LinkadoFeature::Tracking` with the current request, its current user, and no event. Mode and feature flags are checked before resolving the policy; policy resolution/evaluation failures disable tracking for that operation without breaking the host response. Invalid optional tracking configuration is also contained; downstream application and database failures still propagate. Tracking does not emit event eligibility diagnostics.
+
+Keep the resolver read-only and arrange middleware so the required authentication and impersonation context is available before visitor issuance and capture. Admin and impersonation rules belong to the application. Decisions and request/user context are evaluated on each operation, not cached by the package. This policy check alone does not serialize attribution with concurrent registration or identity claims.
+
 ## SSO
 
 SSO is exposed only as the named POST route `linkado.sso.launch`. Launch it from a CSRF-protected form; do not link to the endpoint with GET:

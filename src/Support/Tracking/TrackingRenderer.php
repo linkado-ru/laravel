@@ -6,22 +6,16 @@ namespace Linkado\Laravel\Support\Tracking;
 
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\View\Factory;
-use Illuminate\Http\Request;
-use Linkado\Laravel\Contracts\DeterminesLinkadoEligibility;
-use Linkado\Laravel\Enums\DeliveryMode;
-use Linkado\Laravel\Enums\LinkadoFeature;
 use Linkado\Laravel\Exceptions\InvalidLinkadoConfiguration;
-use Linkado\Laravel\Support\EligibilityContext;
 use Linkado\Laravel\Support\LinkadoConfiguration;
 
 final readonly class TrackingRenderer
 {
     public function __construct(
         private LinkadoConfiguration $configuration,
-        private DeterminesLinkadoEligibility $eligibility,
+        private TrackingGate $tracking,
         private Factory $views,
         private Application $application,
-        private Request $request,
     ) {}
 
     public function render(): string
@@ -35,12 +29,7 @@ final readonly class TrackingRenderer
 
     private function renderConfiguredScript(): string
     {
-        if ($this->configuration->mode() === DeliveryMode::Off
-            || ! $this->configuration->featureEnabled(LinkadoFeature::Tracking)
-            || ! $this->eligibility->allows(
-                LinkadoFeature::Tracking,
-                new EligibilityContext(request: $this->request),
-            )) {
+        if (! $this->tracking->allows(request())) {
             return '';
         }
 
