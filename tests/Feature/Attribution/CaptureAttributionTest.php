@@ -280,7 +280,7 @@ it('rejects a partial raw query parse while leaving selected cookies and host er
         ->and($warnings)->toBe(['host-handler-still-active']);
 })->with([false, true]);
 
-it('rejects raw referral arrays even when PHP silently drops excessive nesting', function (int $depth, bool $cookieWins, bool $unrelated, string $separator): void {
+it('rejects raw referral arrays with either PHP nesting-warning behavior', function (int $depth, bool $cookieWins, bool $unrelated, string $separator, bool $displayErrors): void {
     config()->set('linkado.tracking.referral_parameter', 'custom_ref');
     $request = Request::create('/landing', cookies: [
         'linkado_visitor' => (string) Str::ulid(),
@@ -289,10 +289,19 @@ it('rejects raw referral arrays even when PHP silently drops excessive nesting',
     ]);
     $rawKey = ($unrelated ? 'other' : 'custom.ref').str_repeat('[a]', $depth);
     $request->server->set('QUERY_STRING', 'other=1'.$separator.rawurlencode($rawKey).'=partner');
-    app(CapturePendingAttribution::class)->handle($request, fn (): Response => response('ok'));
-    expect(p11AttributionCount())->toBe($cookieWins || $unrelated ? 1 : 0);
+    $previousDisplayErrors = ini_set('display_errors', $displayErrors ? '1' : '0');
+
+    try {
+        app(CapturePendingAttribution::class)->handle($request, fn (): Response => response('ok'));
+    } finally {
+        ini_set('display_errors', $previousDisplayErrors);
+    }
+    // PHP emits nesting warnings only with display_errors disabled. Any parser
+    // warning rejects the query; a selected cookie still avoids query parsing.
+    $queryWarning = ! $displayErrors && $depth > (int) ini_get('max_input_nesting_level');
+    expect(p11AttributionCount())->toBe($cookieWins || ($unrelated && ! $queryWarning) ? 1 : 0);
 })->with([1, (int) ini_get('max_input_nesting_level') + 1])->with([false, true])->with([false, true])
-    ->with(fn (): array => str_split((string) ini_get('arg_separator.input')));
+    ->with(fn (): array => str_split((string) ini_get('arg_separator.input')))->with([false, true]);
 
 it('honors the exact configured query separators without treating value text as a source', function (): void {
     $request = Request::create('/landing', cookies: [

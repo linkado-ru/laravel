@@ -27,7 +27,7 @@ All notable changes to `linkado-ru/laravel` are documented here. The package fol
 
 - Publish/apply the additive identity migration before upgraded capture/consume, including visitor-only integrations. Pause affected capture/registration for schema cutover, verify health in shadow mode, then enable the optional adapter and resume. Do not backfill legacy identities or drop the column automatically on rollback.
 - The intended release category is minor: existing supported signatures/configuration/SDK constraints remain, with opt-in identity API and stricter security behavior. See [compatibility and migration notes](docs/compatibility.md). Version and publication remain pending verification.
-- Expand database regression CI to all database, attribution, outbox and delivery tests plus mandatory process concurrency. Keep Windows jobs as additional coverage; Ubuntu and server databases remain required.
+- Expand database regression CI to all database, attribution, outbox and delivery tests plus mandatory process concurrency. Run CI on Ubuntu only, with all PHP/dependency and server database cells required.
 
 ## 1.0.0 - 2026-09-21
 

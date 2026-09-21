@@ -382,7 +382,7 @@ Before upgrading:
 
 ## Development
 
-Required CI covers Ubuntu, PHP 8.3/8.4/8.5 with lowest/stable dependencies, and MySQL 8.4, MariaDB 11.4 and PostgreSQL 17. Windows jobs remain additional compatibility coverage; inspect their results separately.
+Required CI covers Ubuntu, PHP 8.3/8.4/8.5 with lowest/stable dependencies, and MySQL 8.4, MariaDB 11.4 and PostgreSQL 17. CI runs on Ubuntu only; Windows is not part of the matrix.
 
 See [the contribution guide](.github/CONTRIBUTING.md) for local validation and pull-request requirements. Security reports follow [the security policy](.github/SECURITY.md).
 

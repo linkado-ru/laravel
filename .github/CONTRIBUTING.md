@@ -42,7 +42,7 @@ LINKADO_TEST_DB_DRIVER=pgsql vendor/bin/pest --group=attribution-concurrency
 
 Supply `LINKADO_TEST_DB_HOST`, `LINKADO_TEST_DB_PORT`, `LINKADO_TEST_DB_DATABASE`, `LINKADO_TEST_DB_USERNAME`, and `LINKADO_TEST_DB_PASSWORD` through the environment. An explicitly empty password is respected. Use only disposable test databases: the suite creates and drops package tables. The test account must be able to inspect lock waits (`performance_schema` for MySQL, `information_schema.INNODB_LOCK_WAITS` for MariaDB, `pg_blocking_pids` for PostgreSQL). Selecting this group without a server database fails rather than skips. Workers use pipe barriers and observed database lock waits; elapsed time never counts as lock evidence. MariaDB observer polling allows its [InnoDB metadata cache to refresh](https://github.com/MariaDB/server/blob/mariadb-11.4.13/storage/innobase/trx/trx0i_s.cc#L898-L914) between reads.
 
-Use `vendor/bin/pint --dirty --format agent` after PHP changes. The required CI matrix covers Ubuntu with PHP 8.3/8.4/8.5 and lowest/stable dependencies, plus MySQL 8.4, MariaDB 11.4, and PostgreSQL 17. Windows cells provide additional, nonblocking coverage.
+Use `vendor/bin/pint --dirty --format agent` after PHP changes. The required CI matrix covers Ubuntu with PHP 8.3/8.4/8.5 and lowest/stable dependencies, plus MySQL 8.4, MariaDB 11.4, and PostgreSQL 17. CI runs on Ubuntu only; Windows is not part of the matrix.
 
 ## Pull requests
 

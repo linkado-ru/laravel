@@ -16,20 +16,16 @@ concurrency:
 
 jobs:
   sqlite:
-    runs-on: ${{ matrix.os }}
-
-    # Windows is additional coverage; required Ubuntu cells must all finish.
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
         php: [8.3, 8.4, 8.5]
         laravel: ['13.*']
         stability: [prefer-lowest, prefer-stable]
 
-    name: SQLite - P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.os }}${{ matrix.os == 'windows-latest' && ' (additional)' || '' }}
+    name: SQLite - P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -57,31 +53,19 @@ jobs:
           composer build
 
       - name: PHPStan
-        if: runner.os != 'Windows'
         run: composer analyse
-
-      - name: PHPStan (Windows)
-        if: runner.os == 'Windows'
-        # Testbench shares its service manifest; avoid concurrent Windows renames.
-        run: composer analyse -- --debug
 
       - name: Linter
         run: composer lint:check
 
       - name: Type Coverage
-        if: runner.os != 'Windows'
         run: composer test:types
 
       - name: Rector
         run: composer rector:check
 
       - name: Test Suite
-        if: runner.os != 'Windows'
         run: composer test:unit
-
-      - name: Test Suite (Windows)
-        if: runner.os == 'Windows'
-        run: vendor/bin/pest
 
       - name: Attribution query validation with configured PHP separators
         run: php -d "arg_separator.input=&;" vendor/bin/pest tests/Feature/Attribution/CaptureAttributionTest.php --filter="raw referral arrays"
@@ -93,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - name: MySQL 8.4

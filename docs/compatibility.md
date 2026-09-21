@@ -42,6 +42,6 @@ The release category is **minor**, based on preserved supported API and additive
 
 ## Evidence boundaries
 
-Required CI: Ubuntu PHP 8.3/8.4/8.5 × prefer-lowest/prefer-stable, Laravel 13; MySQL 8.4, MariaDB 11.4 and PostgreSQL 17 with real process concurrency. Windows is additional coverage and is reported separately. Local macOS results do not prove those Ubuntu jobs. Test fixtures are excluded from distribution; no tracking JavaScript is bundled as a production asset.
+Required CI: Ubuntu PHP 8.3/8.4/8.5 × prefer-lowest/prefer-stable, Laravel 13; MySQL 8.4, MariaDB 11.4 and PostgreSQL 17 with real process concurrency. CI runs on Ubuntu only; Windows is not part of the matrix. Local macOS results do not prove those Ubuntu jobs. Test fixtures are excluded from distribution; no tracking JavaScript is bundled as a production asset.
 
 Before publication, artifact repository installs can prove discovery and upgrade behavior. They cannot prove delivery through Packagist. Release requires separately approved publication, verified remote tag/source reference, exact published-version clean Laravel 13 installation and dependency resolution in a disposable host copy without path/artifact overrides. The consuming application must independently prove SSO, hosted loading/CSP/cookies, identity resolution, middleware ordering and registration locking.
