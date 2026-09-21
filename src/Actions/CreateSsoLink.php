@@ -16,6 +16,8 @@ use Linkado\Laravel\Support\LinkadoConfiguration;
 use Linkado\PhpSdk\DataObjects\CreateSsoLinkData;
 use Linkado\PhpSdk\DataObjects\SsoLinkData;
 use Linkado\PhpSdk\LinkadoConnector;
+use SensitiveParameter;
+use Throwable;
 use UnexpectedValueException;
 
 final readonly class CreateSsoLink
@@ -28,48 +30,56 @@ final readonly class CreateSsoLink
         private Closure $connectorResolver,
     ) {}
 
-    public function handle(Authenticatable $user, Request $request): ?SsoLinkData
+    public function handle(#[SensitiveParameter] Authenticatable $user, #[SensitiveParameter] Request $request): ?SsoLinkData
     {
-        if ($this->configuration->mode() === DeliveryMode::Off
-            || ! $this->configuration->featureEnabled(LinkadoFeature::Sso)
-            || ! $this->eligibility->allows(
-                LinkadoFeature::Sso,
-                new EligibilityContext(user: $user, request: $request),
-            )) {
-            return null;
+        try {
+            if ($this->configuration->mode() === DeliveryMode::Off
+                || ! $this->configuration->featureEnabled(LinkadoFeature::Sso)
+                || ! $this->eligibility->allows(
+                    LinkadoFeature::Sso,
+                    new EligibilityContext(user: $user, request: $request),
+                )) {
+                return null;
+            }
+
+            $resolvedUser = $this->userResolver->resolve($user);
+            $link = ($this->connectorResolver)()->ssoLinks()->create(new CreateSsoLinkData(
+                program_key: $this->configuration->requiredProgramKey(),
+                external_user_id: $resolvedUser->externalUserId,
+                email: $resolvedUser->email,
+                email_verified: $resolvedUser->emailVerified,
+                display_name: $resolvedUser->displayName,
+                redirect_to: $resolvedUser->redirectTo,
+            ));
+
+            if ($this->validRedirectUrl($link->url)) {
+                return $link;
+            }
+        } catch (Throwable) {
+            // SDK and resolver exceptions can retain credentials, user data or one-time URLs.
         }
 
-        $resolvedUser = $this->userResolver->resolve($user);
-        $link = ($this->connectorResolver)()->ssoLinks()->create(new CreateSsoLinkData(
-            program_key: $this->configuration->requiredProgramKey(),
-            external_user_id: $resolvedUser->externalUserId,
-            email: $resolvedUser->email,
-            email_verified: $resolvedUser->emailVerified,
-            display_name: $resolvedUser->displayName,
-            redirect_to: $resolvedUser->redirectTo,
-        ));
-
-        if (! $this->validRedirectUrl($link->url)) {
-            throw new UnexpectedValueException('The Linkado SSO redirect URL is invalid.');
-        }
-
-        return $link;
+        throw new UnexpectedValueException('The Linkado SSO link could not be created safely.');
     }
 
-    private function validRedirectUrl(string $url): bool
+    private function validRedirectUrl(#[SensitiveParameter] string $url): bool
     {
-        if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+        if (filter_var($url, FILTER_VALIDATE_URL) === false
+            || str_contains($url, '\\')
+            || preg_match('/[\x00-\x20\x7f]|%(?:0[0-9a-f]|1[0-9a-f]|7f)/i', $url) === 1) {
             return false;
         }
 
-        $scheme = parse_url($url, PHP_URL_SCHEME);
-        $host = parse_url($url, PHP_URL_HOST);
-        $baseHost = parse_url($this->configuration->requiredBaseUrl(), PHP_URL_HOST);
+        $parts = parse_url($url);
+        $base = parse_url($this->configuration->requiredBaseUrl());
 
-        return is_string($scheme)
-            && strtolower($scheme) === 'https'
-            && is_string($host)
-            && is_string($baseHost)
-            && strcasecmp($host, $baseHost) === 0;
+        return is_array($parts)
+            && is_array($base)
+            && isset($parts['scheme'], $parts['host'], $base['host'])
+            && strtolower($parts['scheme']) === 'https'
+            && ! array_key_exists('user', $parts)
+            && ! array_key_exists('pass', $parts)
+            && strcasecmp($parts['host'], $base['host']) === 0
+            && ($parts['port'] ?? 443) === ($base['port'] ?? 443);
     }
 }
