@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Linkado\Laravel\Console\Commands;
 
 use Illuminate\Console\Command;
+use Linkado\Laravel\Support\LinkadoConfiguration;
 
 class InstallCommand extends Command
 {
@@ -39,6 +40,10 @@ class InstallCommand extends Command
         }
 
         $this->components->info('Linkado resources published.');
+
+        foreach (app(LinkadoConfiguration::class)->configurationIssues()['errors'] as $issue) {
+            $this->line($issue['code'].': '.$issue['setting']);
+        }
 
         return self::SUCCESS;
     }

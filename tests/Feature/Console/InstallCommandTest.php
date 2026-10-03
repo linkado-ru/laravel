@@ -7,6 +7,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     $this->files = app(Filesystem::class);
     $this->publishedConfigPath = config_path('linkado.php');
     $this->publishedLanguagePath = app()->langPath('vendor/linkado');
@@ -50,7 +54,7 @@ it('overwrites an existing Linkado configuration when forced', function (): void
     $this->artisan('linkado:install', ['--force' => true])
         ->assertSuccessful();
 
-    expect($this->files->get($this->publishedConfigPath))->toContain("'mode' => env('LINKADO_MODE', 'off'),");
+    expect($this->files->get($this->publishedConfigPath))->toContain("'mode' => env('LINKADO_MODE', 'live'),");
 });
 
 it('preserves published migrations across later installation and publication', function (string $command, array $arguments): void {

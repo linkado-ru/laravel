@@ -12,8 +12,11 @@ composer.lock
 .vscode
 
 # Local planning and agent configuration
-/.agents
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/linkado-laravel-development
+!/.agents/skills/linkado-laravel-release
 /.claude
-/AGENTS.md
 /CLAUDE.md
 /docs/superpowers

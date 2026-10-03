@@ -32,7 +32,18 @@ final class DiagnoseCommand extends Command
 
     public function handle(): int
     {
-        $report = $this->report();
+        $report = ['configuration' => $this->configuration->configurationIssues()];
+
+        try {
+            $report = [...$this->report(), ...$report, 'database' => 'available'];
+        } catch (Throwable) {
+            $report = [
+                'counts' => array_fill_keys(['pending', 'stale', 'conflict', 'exhausted', 'corrupt'], null),
+                'commands' => [],
+                ...$report,
+                'database' => 'unavailable',
+            ];
+        }
 
         if ($this->option('json') === true) {
             $this->line(json_encode($report, JSON_THROW_ON_ERROR));
@@ -43,15 +54,19 @@ final class DiagnoseCommand extends Command
         $this->table(
             ['Category', 'Count', 'Command'],
             array_map(
-                fn (string $category, int $count): array => [
+                fn (string $category, ?int $count): array => [
                     $category,
-                    (string) $count,
+                    $count === null ? 'unavailable' : (string) $count,
                     $this->commandFor($category, $report['commands']),
                 ],
                 array_keys($report['counts']),
                 $report['counts'],
             ),
         );
+
+        foreach ([...$report['configuration']['errors'], ...$report['configuration']['warnings']] as $issue) {
+            $this->line($issue['code'].': '.$issue['setting']);
+        }
 
         return self::SUCCESS;
     }

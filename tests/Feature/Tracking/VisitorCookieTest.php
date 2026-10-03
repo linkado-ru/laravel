@@ -10,6 +10,10 @@ use Linkado\Laravel\Http\Middleware\EnsureLinkadoVisitor;
 use Symfony\Component\HttpFoundation\Cookie;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     config()->set('linkado.mode', 'live');
     config()->set('linkado.features.tracking', true);
 

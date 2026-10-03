@@ -7,8 +7,11 @@ namespace Linkado\Laravel\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Schema\Builder;
+use Linkado\Laravel\Contracts\ResolvesLinkadoSsoUser;
 use Linkado\Laravel\Enums\DeliveryMode;
+use Linkado\Laravel\Enums\LinkadoFeature;
 use Linkado\Laravel\Enums\OutboxStatus;
+use Linkado\Laravel\Linkado;
 use Linkado\Laravel\Support\Health\HealthCheck;
 use Linkado\Laravel\Support\Health\HealthReport;
 use Linkado\Laravel\Support\LinkadoConfiguration;
@@ -33,9 +36,10 @@ final class HealthCommand extends Command
     public function handle(): int
     {
         $report = $this->report();
+        $issues = $this->configurationIssues();
 
         if ($this->option('json') === true) {
-            $this->line(json_encode($report->toArray(), JSON_THROW_ON_ERROR));
+            $this->line(json_encode([...$report->toArray(), 'configuration' => $issues], JSON_THROW_ON_ERROR));
         } else {
             $this->table(
                 ['Code', 'Status', 'Count'],
@@ -44,6 +48,12 @@ final class HealthCommand extends Command
                     $report->checks,
                 ),
             );
+        }
+
+        foreach ([...$issues['errors'], ...$issues['warnings']] as $issue) {
+            if ($this->option('json') !== true) {
+                $this->line($issue['code'].': '.$issue['setting']);
+            }
         }
 
         return $report->exitCode();
@@ -66,7 +76,7 @@ final class HealthCommand extends Command
 
         if ($mode === DeliveryMode::Off) {
             return new HealthReport([
-                $this->healthy('configuration'),
+                $this->configurationCheck(),
                 $this->notApplicable('database'),
                 $this->notApplicable('migrations'),
                 $this->notApplicable('pending_lag'),
@@ -75,7 +85,7 @@ final class HealthCommand extends Command
             ]);
         }
 
-        $configuration = $this->configurationCheck($mode);
+        $configuration = $this->configurationCheck();
         $connection = $this->connectionCheck();
 
         if ($connection === null) {
@@ -112,27 +122,47 @@ final class HealthCommand extends Command
         ]);
     }
 
-    private function configurationCheck(DeliveryMode $mode): HealthCheck
+    private function configurationCheck(): HealthCheck
     {
-        if ($mode !== DeliveryMode::Live) {
-            return $this->healthy('configuration');
-        }
+        $issues = $this->configurationIssues();
 
-        try {
-            $this->configuration->requiredToken();
-            $baseUrl = $this->configuration->requiredBaseUrl();
-            $parts = parse_url($baseUrl);
-
-            if (! is_array($parts)
-                || ($parts['scheme'] ?? null) !== 'https'
-                || ! isset($parts['host'])) {
-                return $this->failure('configuration');
-            }
-        } catch (Throwable) {
-            return $this->failure('configuration');
+        if ($issues['errors'] !== []) {
+            return $this->failure('configuration', count($issues['errors']));
         }
 
         return $this->healthy('configuration');
+    }
+
+    /** @return array{errors: list<array{code: string, setting: string}>, warnings: list<array{code: string, setting: string}>} */
+    private function configurationIssues(): array
+    {
+        $issues = $this->configuration->configurationIssues();
+
+        if ($issues['errors'] !== []) {
+            return $issues;
+        }
+
+        try {
+            if ($this->configuration->mode() !== DeliveryMode::Live
+                || ! $this->configuration->featureEnabled(LinkadoFeature::Sso)) {
+                return $issues;
+            }
+
+            if ($this->hasSsoResolver(app(ResolvesLinkadoSsoUser::class))) {
+                return $issues;
+            }
+        } catch (Throwable) {
+            // Resolver construction can retain private host configuration.
+        }
+
+        $issues['errors'][] = ['code' => 'missing_sso_resolver', 'setting' => ResolvesLinkadoSsoUser::class];
+
+        return $issues;
+    }
+
+    private function hasSsoResolver(ResolvesLinkadoSsoUser $resolver): bool
+    {
+        return ! $resolver instanceof Linkado;
     }
 
     private function connectionCheck(): ?Builder

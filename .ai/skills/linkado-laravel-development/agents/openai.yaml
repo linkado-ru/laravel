@@ -1,0 +1,4 @@
+interface:
+  display_name: "Linkado Laravel Development"
+  short_description: "Maintain Linkado Laravel package"
+  default_prompt: "Use $linkado-laravel-development to change and verify the Linkado Laravel package while preserving its public contract."

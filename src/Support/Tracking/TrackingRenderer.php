@@ -6,6 +6,7 @@ namespace Linkado\Laravel\Support\Tracking;
 
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\View\Factory;
+use Linkado\Laravel\Enums\DeliveryMode;
 use Linkado\Laravel\Exceptions\InvalidLinkadoConfiguration;
 use Linkado\Laravel\Support\LinkadoConfiguration;
 
@@ -29,7 +30,7 @@ final readonly class TrackingRenderer
 
     private function renderConfiguredScript(): string
     {
-        if (! $this->tracking->allows(request())) {
+        if ($this->configuration->mode() !== DeliveryMode::Live || ! $this->tracking->allows(request())) {
             return '';
         }
 

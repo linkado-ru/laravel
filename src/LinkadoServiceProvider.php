@@ -51,6 +51,8 @@ class LinkadoServiceProvider extends ServiceProvider
         $this->app->singleton(LinkadoConnector::class, function (Application $app): LinkadoConnector {
             $configuration = $app->make(LinkadoConfiguration::class);
 
+            $configuration->requiredProgramKey();
+
             return new LinkadoConnector(
                 token: $configuration->requiredToken(),
                 baseUrl: $configuration->requiredBaseUrl(),
@@ -63,8 +65,8 @@ class LinkadoServiceProvider extends ServiceProvider
 
         $this->app->bind(CreateSsoLink::class, fn (Application $app): CreateSsoLink => new CreateSsoLink(
             configuration: $app->make(LinkadoConfiguration::class),
-            eligibility: $app->make(DeterminesLinkadoEligibility::class),
-            userResolver: $app->make(ResolvesLinkadoSsoUser::class),
+            eligibilityResolver: fn (): DeterminesLinkadoEligibility => $app->make(DeterminesLinkadoEligibility::class),
+            userResolver: fn (): ResolvesLinkadoSsoUser => $app->make(ResolvesLinkadoSsoUser::class),
             connectorResolver: fn (): LinkadoConnector => $app->make(LinkadoConnector::class),
         ));
 

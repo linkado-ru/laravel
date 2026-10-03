@@ -21,6 +21,10 @@ use Linkado\PhpSdk\LinkadoConnector;
 use Symfony\Component\HttpFoundation\Response;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     config()->set('database.connections.tracking_policy', [
         'driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '',
     ]);
@@ -198,11 +202,11 @@ it('contains current user resolution failures on every tracking surface', functi
     expect(DB::connection('tracking_policy')->table('linkado_pending_attributions')->count())->toBe(0);
 });
 
-it('boots default bindings and permits tracking without credentials', function (): void {
+it('boots default bindings and disables live tracking without credentials', function (): void {
     config()->set('linkado.token', null);
-    $this->get('/_tracking-policy?ref=partner')->assertOk()->assertSee('<script', false)
-        ->assertCookie('linkado_visitor');
-    expect(DB::connection('tracking_policy')->table('linkado_pending_attributions')->count())->toBe(1);
+    $this->get('/_tracking-policy?ref=partner')->assertOk()->assertDontSee('<script', false)
+        ->assertCookieMissing('linkado_visitor');
+    expect(DB::connection('tracking_policy')->table('linkado_pending_attributions')->count())->toBe(0);
 });
 
 it('keeps storage failures visible instead of treating them as optional tracking setup', function (): void {

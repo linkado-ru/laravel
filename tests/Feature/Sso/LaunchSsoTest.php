@@ -26,6 +26,10 @@ use Saloon\Http\Faking\MockResponse;
 use Saloon\Http\PendingRequest;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     config()->set('linkado.mode', 'live');
     config()->set('linkado.features.sso', true);
     config()->set('linkado.program_key', 'program-public-key');
@@ -430,15 +434,32 @@ function p13MockConnector(MockResponse $response): MockClient
     $mockClient = new MockClient([
         CreateSsoLinkRequest::class => $response,
     ]);
-    $connector = new LinkadoConnector(
-        token: (string) config('linkado.token'),
-        baseUrl: (string) config('linkado.base_url'),
-    );
+    $connector = app(LinkadoConnector::class);
     $connector->withMockClient($mockClient);
     app()->instance(LinkadoConnector::class, $connector);
 
     return $mockClient;
 }
+
+it('uses the resolved origin for SSO HTTP and grants no redirect permission to tracking hosts', function (string $redirect, bool $allowed): void {
+    // Arrange
+    config()->set('linkado.url', 'https://chosen.test:8443/');
+    config()->set('linkado.base_url', 'https://legacy.test/custom/api');
+    config()->set('linkado.tracking.script_url', 'https://cdn.test/tracking.js?v=2');
+    config()->set('linkado.tracking.endpoint_url', 'https://proxy.test/clicks');
+    $mock = p13MockConnector(p13SsoResponse($redirect));
+
+    // Act
+    $response = $this->actingAs(p13User())->post(route('linkado.sso.launch'));
+
+    // Assert
+    $response->assertRedirect($allowed ? $redirect : '/safe');
+    expect($mock->getLastPendingRequest()?->getUrl())->toBe('https://chosen.test:8443/api/v1/sso-links');
+})->with([
+    'selected origin' => ['https://chosen.test:8443/sso/nonce', true],
+    'asset host' => ['https://cdn.test/sso/nonce', false],
+    'proxy host' => ['https://proxy.test/sso/nonce', false],
+]);
 
 function p13SsoResponse(string $url = 'https://linkado.test/sso/signed-nonce'): MockResponse
 {
@@ -457,3 +478,15 @@ it('falls back to a local path when the configured error redirect is unsafe', fu
 
     $this->actingAs(p13User())->post('/linkado/sso')->assertRedirect('/');
 })->with(['https://external.test', '//external.test', '/\\external.test', "/safe\r\nLocation: https://external.test"]);
+
+it('stops disabled and shadow launches before constructing host adapters or the connector', function (string $mode, bool $flag): void {
+    // Arrange
+    config()->set('linkado.mode', $mode);
+    config()->set('linkado.features.sso', $flag);
+    foreach ([DeterminesLinkadoEligibility::class, ResolvesLinkadoSsoUser::class, LinkadoConnector::class] as $service) {
+        app()->bind($service, fn (): never => throw new LogicException('Disabled SSO must remain lazy'));
+    }
+
+    // Act & Assert
+    $this->actingAs(p13User())->post(route('linkado.sso.launch'))->assertRedirect('/safe');
+})->with(['disabled live' => ['live', false], 'configured shadow' => ['shadow', true]]);

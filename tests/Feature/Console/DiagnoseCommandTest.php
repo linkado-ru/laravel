@@ -11,9 +11,14 @@ use Linkado\Laravel\Enums\DeliveryMode;
 use Linkado\Laravel\Enums\OutboxStatus;
 use Linkado\Laravel\Models\OutboxEvent;
 use Linkado\Laravel\Support\Events\EventPayloadCodec;
+use Linkado\Laravel\Support\LinkadoConfiguration;
 use Linkado\PhpSdk\DataObjects\CustomerCreatedEventData;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     CarbonImmutable::setTestNow('2026-09-21 12:00:00 UTC');
 
     config()->set('database.connections.linkado_diagnose_test', [
@@ -147,6 +152,8 @@ function p19Report(array $counts = [], array $commands = []): string
             'corrupt' => $counts['corrupt'] ?? 0,
         ],
         'commands' => $commands,
+        'configuration' => app(LinkadoConfiguration::class)->configurationIssues(),
+        'database' => 'available',
     ], JSON_THROW_ON_ERROR);
 }
 

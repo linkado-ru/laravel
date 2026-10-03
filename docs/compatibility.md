@@ -1,6 +1,20 @@
-# Compatibility since v1.0.0
+# Compatibility: v1.1.0 to v2.0.0
 
-Baseline: published `v1.0.0`, source `a3fa7fcb82d5e4af5a770024bb2f547441029b4a`. These notes describe the unreleased candidate; they do not assert publication or application integration readiness.
+V1.1.0 baseline: `9356205342526b1b41cb9778da46db9ba16d74ca`. V2 is intentionally major because defaults change. This document does not assert publication, remote readiness or completed hosted/financial acceptance.
+
+The public record/attribution/consume/contracts/getter signatures and immutable DTO payloads remain; `Linkado::enabled(LinkadoFeature): bool` is added. Mode defaults to live, tracking/customer/billing/refund to true, SSO to false, referral to via and TTL to 5184000. Missing live token/program disables new operations. Shadow requires program only and no longer loads hosted assets or runs SSO. Delivery preflight preserves pending events without new attempts during missing live configuration.
+
+`url` is a new optional raw HTTPS origin. `base_url` remains a full API URL and is optional. Origin wins; both are validated. Blank URL settings fall back; malformed nonempty settings never change the selected environment. CDN/proxy overrides affect only tracking, not API/SSO authority. Blank connection/queue names normalize to null. No SDK change, new schema, importer, history mutation or producer rewrite is introduced.
+
+Internal container constructor changes: Linkado manager receives configuration; CreateSsoLink receives lazy policy/user-resolver closures. Use facade/contracts instead of constructing package implementation classes.
+
+Migration: retain explicit prior mode/flags before upgrading the Composer constraint to `^2.0`; merge published config manually; remove legacy env overrides only after verification. Preserve all four migrations/outbox history, rebuild config cache and restart workers through normal deployment. Package publication requires exact-SHA CI and published install/reference verification. Before consumer deployment, complete the separate hosted-service and application acceptance gates.
+
+V1.1 already includes the fourth identity migration; v1.1-to-v2 adds no fifth migration. V1.0 consumers must verify that additive migration is applied even without an identity adapter. See [RELEASING.md](../RELEASING.md) for preparation, authorized publication and post-release verification; hosted/program/consumer readiness is tracked separately from package evidence.
+
+## Historical v1.0.0 to v1.1.0 changes
+
+Baseline: published `v1.0.0`, source `a3fa7fcb82d5e4af5a770024bb2f547441029b4a`. The following sections retain the historical v1.1 changes; the current v2 contract and release gates are above.
 
 ## Supported integration API
 
@@ -38,7 +52,7 @@ Implementation classes are container-resolved, not host extension points. For co
 4. If opting in, bind the generic adapter shown in the README and prove every claim path follows same-connection consume-before-claim. Do not guess associations for legacy rows. Then resume traffic/features.
 5. For rollback, first disable affected integration. Do not automatically drop the migration or promise that older capture/consume restores lifecycle guarantees.
 
-The release category is **minor**, based on preserved supported API and additive optional identity extension. The deliberate tightening of unsafe SSO and attribution behavior requires migration/integration testing; unchanged PHP signatures do not mean unchanged acceptance of insecure inputs. Version selection and final release proposal follow mandatory CI review.
+The historical v1.1 release category was **minor**, based on preserved supported API and the additive optional identity extension. The deliberate tightening of unsafe SSO and attribution behavior required migration/integration testing; unchanged PHP signatures did not mean unchanged acceptance of insecure inputs. V2 is major, with its own gates above.
 
 ## Evidence boundaries
 

@@ -13,6 +13,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Linkado\Laravel\Actions\ClaimOutboxEvent;
 use Linkado\Laravel\Actions\DeliverClaimedOutboxEvent;
+use Linkado\Laravel\Enums\DeliveryMode;
 use Linkado\Laravel\Support\LinkadoConfiguration;
 use Throwable;
 
@@ -36,6 +37,13 @@ final class DeliverOutboxEvent implements ShouldBeUniqueUntilProcessing, ShouldQ
         ClaimOutboxEvent $claimOutboxEvent,
         DeliverClaimedOutboxEvent $deliverClaimedOutboxEvent,
     ): void {
+        $configuration = app(LinkadoConfiguration::class);
+
+        if ($configuration->mode() === DeliveryMode::Live
+            && ! $configuration->liveDeliveryConfigured()) {
+            return;
+        }
+
         $claimed = $claimOutboxEvent->claim($this->eventId);
 
         if ($claimed === null) {

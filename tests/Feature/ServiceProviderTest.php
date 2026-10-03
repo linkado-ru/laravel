@@ -9,15 +9,16 @@ use Linkado\Laravel\Support\LinkadoConfiguration;
 use Linkado\PhpSdk\LinkadoConnector;
 
 it('merges the locked Linkado configuration defaults', function () {
-    expect(config('linkado.mode'))->toBe('off')
+    config()->set('linkado', $this->packageDefaults());
+    expect(config('linkado.mode'))->toBe('live')
         ->and(config('linkado.features'))->toBe([
             'sso' => false,
-            'tracking' => false,
-            'customer_events' => false,
-            'billing_events' => false,
-            'refund_events' => false,
+            'tracking' => true,
+            'customer_events' => true,
+            'billing_events' => true,
+            'refund_events' => true,
         ])
-        ->and(config('linkado.tracking.referral_parameter'))->toBe('ref')
+        ->and(config('linkado.tracking.referral_parameter'))->toBe('via')
         ->and(config('linkado.delivery.max_attempts'))->toBe(8);
 });
 
@@ -41,8 +42,9 @@ it('rejects an unknown delivery mode', function () {
 
 it('resolves configuration as a singleton without credentials when disabled', function () {
     config()->set('linkado.mode', 'off');
+    config()->set('linkado.program_key', 'synthetic-program');
     config()->set('linkado.token', null);
-    config()->set('linkado.base_url', null);
+    config()->set('linkado.base_url', 'invalid-url');
 
     expect(app(LinkadoConfiguration::class))
         ->toBe(app(LinkadoConfiguration::class))
@@ -66,6 +68,7 @@ it('parses features, connection, queue, and program key from Laravel config', fu
 });
 
 it('constructs one connector from the configured credentials', function () {
+    config()->set('linkado.program_key', 'synthetic-program');
     config()->set('linkado.token', 'test-token');
     config()->set('linkado.base_url', 'https://api.example.test/v1');
 
@@ -82,8 +85,9 @@ it('constructs one connector from the configured credentials', function () {
 });
 
 it('validates connector credentials lazily without exposing the token', function () {
+    config()->set('linkado.program_key', 'synthetic-program');
     config()->set('linkado.token', 'token-that-must-not-leak');
-    config()->set('linkado.base_url', null);
+    config()->set('linkado.base_url', 'invalid-url');
 
     expect(app(LinkadoConfiguration::class))->toBeInstanceOf(LinkadoConfiguration::class);
 
@@ -95,10 +99,11 @@ it('validates connector credentials lazily without exposing the token', function
         return;
     }
 
-    throw new LogicException('Resolving the SDK connector without a base URL must fail.');
+    throw new LogicException('Resolving the SDK connector with an invalid base URL must fail.');
 });
 
 it('rejects unsafe SDK base URLs before constructing a connector', function (string $url): void {
+    config()->set('linkado.program_key', 'synthetic-program');
     config()->set('linkado.token', 'private-token');
     config()->set('linkado.base_url', $url);
 

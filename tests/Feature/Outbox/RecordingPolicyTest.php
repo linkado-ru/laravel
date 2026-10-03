@@ -27,6 +27,10 @@ use Linkado\PhpSdk\Enums\EventType;
 use Linkado\PhpSdk\Enums\PaymentKind;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     config()->set('database.connections.linkado_policy_test', [
         'driver' => 'sqlite',
         'database' => ':memory:',

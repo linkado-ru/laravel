@@ -11,6 +11,10 @@ use Linkado\Laravel\Support\EligibilityContext;
 use Linkado\Laravel\Support\LinkadoConfiguration;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     config()->set('linkado.mode', 'live');
     config()->set('linkado.features.tracking', true);
     config()->set('linkado.program_key', 'public-program');
@@ -132,8 +136,8 @@ it('omits hosted tracking when its configuration cannot satisfy the runtime cont
     'empty parameter' => ['tracking.referral_parameter', ''],
     'blank parameter' => ['tracking.referral_parameter', '   '],
     'array parameter' => ['tracking.referral_parameter', []],
-    'missing script' => ['tracking.script_url', null],
-    'missing endpoint' => ['tracking.endpoint_url', null],
+    'malformed script' => ['tracking.script_url', 'not-a-url'],
+    'malformed endpoint' => ['tracking.endpoint_url', 'not-a-url'],
     'invalid mode' => ['mode', 'invalid'],
     'invalid feature flag' => ['features.tracking', 'true'],
 ]);

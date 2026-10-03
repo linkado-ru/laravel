@@ -1,0 +1,4 @@
+interface:
+  display_name: "Linkado Laravel Release"
+  short_description: "Prepare Linkado Laravel releases"
+  default_prompt: "Use $linkado-laravel-release to prepare and verify a Composer release within the authorized scope."

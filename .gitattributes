@@ -11,7 +11,10 @@
 /testbench.yaml     export-ignore
 /workbench          export-ignore
 /.claude            export-ignore
+/.ai                export-ignore
+/.ai/**             export-ignore
 /.agents            export-ignore
+/.agents/**         export-ignore
 /CLAUDE.md          export-ignore
 /AGENTS.md          export-ignore
 /AGENTS_PACKAGE.md  export-ignore

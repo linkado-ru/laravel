@@ -2,7 +2,27 @@
 
 All notable changes to `linkado-ru/laravel` are documented here. The package follows [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.0.0 - 2026-10-03
+
+### Breaking defaults
+
+- Default to live with tracking/customer/billing/refund enabled, SSO disabled, `via` and 60-day attribution. Two credentials enable a standard production program after host setup; missing credentials fail closed without breaking application boot.
+- Add HTTPS origin `LINKADO_URL` and locally computed API/script/click URLs. Preserve full-API semantics of legacy `LINKADO_BASE_URL`; validate ignored/advanced settings and never fall back to production on invalid input.
+- Expose `Linkado::enabled()` and share readiness across capture, rendering, recording and SSO. Shadow keeps only local capture/recording; SSO adapters resolve lazily after readiness/policy.
+- Keep pending delivery unclaimed while live credentials are unavailable. Add redacted configuration diagnostics and missing-schema reporting; installation remains publish-only.
+
+V2 requires explicit migration; SDK v1.0.0 and the four published migrations remain unchanged.
+
+### Upgrade
+
+- Preserve prior mode and feature flags explicitly before changing the constraint to `^2.0`. Manually merge published configuration without `--force`; retain full API semantics for `LINKADO_BASE_URL`, or use an HTTPS origin with `LINKADO_URL`.
+- Verify all four migrations, including the identity migration for v1.0 consumers. V1.1-to-v2 adds no migration. Complete consumer acceptance before rebuilding config cache and restarting workers through its deployment procedure.
+
+### Added
+
+- Repository development/release AI skills with relative discovery aliases, a staged release procedure, and updated consumer-facing Boost guidance for v2 installation, upgrades and operations. Local maintainer instructions are excluded from dist; the Boost skill remains bundled.
+
+## 1.1.0 - 2026-09-21
 
 ### Added
 
@@ -26,7 +46,7 @@ All notable changes to `linkado-ru/laravel` are documented here. The package fol
 ### Upgrade
 
 - Publish/apply the additive identity migration before upgraded capture/consume, including visitor-only integrations. Pause affected capture/registration for schema cutover, verify health in shadow mode, then enable the optional adapter and resume. Do not backfill legacy identities or drop the column automatically on rollback.
-- The intended release category is minor: existing supported signatures/configuration/SDK constraints remain, with opt-in identity API and stricter security behavior. See [compatibility and migration notes](docs/compatibility.md). Version and publication remain pending verification.
+- The v1.1 release category was minor: existing supported signatures/configuration/SDK constraints remained, with opt-in identity API and stricter security behavior. See [compatibility and migration notes](docs/compatibility.md). See [RELEASING.md](RELEASING.md) for current publication gates.
 - Expand database regression CI to all database, attribution, outbox and delivery tests plus mandatory process concurrency. Run CI on Ubuntu only, with all PHP/dependency and server database cells required.
 
 ## 1.0.0 - 2026-09-21

@@ -23,6 +23,10 @@ use Linkado\PhpSdk\DataObjects\EventData;
 use Linkado\PhpSdk\LinkadoConnector;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     config()->set('database.connections.host_test', [
         'driver' => 'sqlite',
         'database' => ':memory:',
@@ -314,3 +318,20 @@ it('reloads a committed concurrent winner outside the original read snapshot', f
         DB::purge('linkado_race_winner');
     }
 })->with([false, true]);
+
+it('does not call the factory or create a live snapshot without complete credentials', function (string $setting): void {
+    // Arrange
+    config()->set('linkado.'.$setting, '');
+    $calls = 0;
+
+    // Act
+    $recorded = p7Connection()->transaction(fn () => Linkado::record('missing:credentials', function (string $id) use (&$calls): EventData {
+        $calls++;
+
+        return p7CustomerCreated($id);
+    }));
+
+    // Assert
+    expect($recorded)->toBeNull()->and($calls)->toBe(0)
+        ->and(OutboxEvent::query()->count())->toBe(0);
+})->with(['token', 'program_key']);
