@@ -37,4 +37,28 @@
             <directory suffix=".php">src</directory>
         </include>
     </source>
+    <php>
+        <env name="LINKADO_MODE" value="off" force="true"/>
+        <env name="LINKADO_URL" value="" force="true"/>
+        <env name="LINKADO_BASE_URL" value="" force="true"/>
+        <env name="LINKADO_TOKEN" value="" force="true"/>
+        <env name="LINKADO_PROGRAM_KEY" value="" force="true"/>
+        <env name="LINKADO_SSO_ENABLED" value="false" force="true"/>
+        <env name="LINKADO_TRACKING_ENABLED" value="false" force="true"/>
+        <env name="LINKADO_CUSTOMER_EVENTS_ENABLED" value="false" force="true"/>
+        <env name="LINKADO_BILLING_EVENTS_ENABLED" value="false" force="true"/>
+        <env name="LINKADO_REFUND_EVENTS_ENABLED" value="false" force="true"/>
+        <env name="APP_CONFIG_CACHE" value="/tmp/linkado-package-test-config.php" force="true"/>
+        <server name="LINKADO_MODE" value="off" force="true"/>
+        <server name="LINKADO_URL" value="" force="true"/>
+        <server name="LINKADO_BASE_URL" value="" force="true"/>
+        <server name="LINKADO_TOKEN" value="" force="true"/>
+        <server name="LINKADO_PROGRAM_KEY" value="" force="true"/>
+        <server name="LINKADO_SSO_ENABLED" value="false" force="true"/>
+        <server name="LINKADO_TRACKING_ENABLED" value="false" force="true"/>
+        <server name="LINKADO_CUSTOMER_EVENTS_ENABLED" value="false" force="true"/>
+        <server name="LINKADO_BILLING_EVENTS_ENABLED" value="false" force="true"/>
+        <server name="LINKADO_REFUND_EVENTS_ENABLED" value="false" force="true"/>
+        <server name="APP_CONFIG_CACHE" value="/tmp/linkado-package-test-config.php" force="true"/>
+    </php>
 </phpunit>

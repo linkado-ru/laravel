@@ -53,7 +53,9 @@ final readonly class RecordLinkadoEvent
         $connection = $this->transaction->ensure();
         $mode = $this->configuration->mode();
 
-        if ($mode === DeliveryMode::Off) {
+        if ($mode === DeliveryMode::Off
+            || ($mode === DeliveryMode::Live && ! $this->configuration->liveDeliveryConfigured())
+            || ($mode === DeliveryMode::Shadow && $this->configuration->programKey() === null)) {
             return null;
         }
 
@@ -69,7 +71,7 @@ final readonly class RecordLinkadoEvent
 
         $feature = $this->featureMap->featureFor($event->type());
 
-        if (! $this->configuration->featureEnabled($feature)) {
+        if (! $this->configuration->enabled($feature)) {
             return null;
         }
 

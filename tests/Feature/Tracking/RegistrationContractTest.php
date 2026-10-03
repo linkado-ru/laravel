@@ -27,6 +27,10 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Process\Process;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     CarbonImmutable::setTestNow('2026-09-21 00:00:00');
     config()->set('database.connections.registration_contract', [
         'driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '', 'foreign_key_constraints' => true,

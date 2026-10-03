@@ -9,7 +9,6 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
 use Linkado\Laravel\Contracts\DeterminesLinkadoEligibility;
 use Linkado\Laravel\Contracts\ResolvesLinkadoSsoUser;
-use Linkado\Laravel\Enums\DeliveryMode;
 use Linkado\Laravel\Enums\LinkadoFeature;
 use Linkado\Laravel\Support\EligibilityContext;
 use Linkado\Laravel\Support\LinkadoConfiguration;
@@ -22,27 +21,30 @@ use UnexpectedValueException;
 
 final readonly class CreateSsoLink
 {
-    /** @param Closure(): LinkadoConnector $connectorResolver */
+    /**
+     * @param  Closure(): DeterminesLinkadoEligibility  $eligibilityResolver
+     * @param  Closure(): ResolvesLinkadoSsoUser  $userResolver
+     * @param  Closure(): LinkadoConnector  $connectorResolver
+     */
     public function __construct(
         private LinkadoConfiguration $configuration,
-        private DeterminesLinkadoEligibility $eligibility,
-        private ResolvesLinkadoSsoUser $userResolver,
+        private Closure $eligibilityResolver,
+        private Closure $userResolver,
         private Closure $connectorResolver,
     ) {}
 
     public function handle(#[SensitiveParameter] Authenticatable $user, #[SensitiveParameter] Request $request): ?SsoLinkData
     {
         try {
-            if ($this->configuration->mode() === DeliveryMode::Off
-                || ! $this->configuration->featureEnabled(LinkadoFeature::Sso)
-                || ! $this->eligibility->allows(
+            if (! $this->configuration->enabled(LinkadoFeature::Sso)
+                || ! ($this->eligibilityResolver)()->allows(
                     LinkadoFeature::Sso,
                     new EligibilityContext(user: $user, request: $request),
                 )) {
                 return null;
             }
 
-            $resolvedUser = $this->userResolver->resolve($user);
+            $resolvedUser = ($this->userResolver)()->resolve($user);
             $link = ($this->connectorResolver)()->ssoLinks()->create(new CreateSsoLinkData(
                 program_key: $this->configuration->requiredProgramKey(),
                 external_user_id: $resolvedUser->externalUserId,

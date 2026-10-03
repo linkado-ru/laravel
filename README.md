@@ -32,39 +32,46 @@ php artisan vendor:publish --tag=linkado-lang
 
 ## Configuration
 
-Start disabled, add the credential and public program key supplied by Linkado, then enable only the features the application has integrated:
+A production installation using a standard `via` / 60-day program needs two environment values after migrations, host adapters/producers, workers and scheduler are installed:
 
 ```dotenv
-LINKADO_MODE=shadow
 LINKADO_TOKEN=integration-credential
 LINKADO_PROGRAM_KEY=program-public-key
-LINKADO_CUSTOMER_EVENTS_ENABLED=true
 ```
 
-Never commit the credential. `shadow` mode is recommended while validating an integration because it records terminal local snapshots without sending outbox events. Tracking and SSO still follow their feature flags in shadow mode.
+The default is `live`; tracking, customer, billing and refund features are on, while SSO remains off. Without either credential, the application boots normally but live capture, hosted markup, recording and SSO are unavailable; no connector or HTTP request is created. `linkado:health` and `linkado:diagnose` report setting names without credential values. Offline health cannot confirm remote program settings or credential scopes.
+
+For local delivery, add `LINKADO_URL=https://linkado.test`. Known URLs are resolved locally: API `{origin}/api/v1`, script `{origin}/build/tracking.js`, clicks `{API base}/tracking/clicks`. No discovery request is made. A nonempty `LINKADO_URL` wins over legacy `LINKADO_BASE_URL`, whose meaning remains a full API URL including any custom prefix; diagnose warns that the legacy value is ignored. Both are validated even when one loses precedence. Blank/null optional URLs use defaults; invalid nonempty URLs fail with the setting name and never switch to production.
+
+Origins require HTTPS and a host, allow a port and trailing root slash, and forbid API paths, query, fragment, user-info and unsafe characters. Advanced script/endpoint overrides affect only their corresponding URL, support CDN/proxy hosts and query strings, and permit HTTP only in local/testing. API and SSO always require HTTPS. SSO redirects must match the selected API host and effective port; CDN/proxy overrides grant no SSO permission.
+
+Local shadow needs only `LINKADO_MODE=shadow` and a public program key (optionally `LINKADO_URL`). It retains local capture and immutable snapshots, but loads no hosted script and makes no SSO or outbox HTTP request. `LINKADO_MODE=off` stops new capture and recording. Consume-before-claim still applies in every mode. SSO requires an explicit `LINKADO_SSO_ENABLED=true` and a host user resolver.
+
+Never commit credentials. A default URL does not prove DNS/TLS, public assets, merchant CORS, workers, program rules or remote scopes are ready.
 
 Every package configuration key is listed below. Values without an environment variable are intentionally changed in `config/linkado.php` after publishing.
 
 | Configuration key | Environment variable / default | Purpose |
 | --- | --- | --- |
-| `linkado.mode` | `LINKADO_MODE=off` | Delivery mode: `off`, `shadow`, or `live`. |
+| `linkado.mode` | `LINKADO_MODE=live` | Delivery mode: `off`, `shadow`, or `live`. |
 | `linkado.connection` | `LINKADO_DB_CONNECTION=null` | Database connection that owns the host transaction and Linkado tables. `null` uses the default connection. |
 | `linkado.queue` | `LINKADO_QUEUE=null` | Queue name for delivery jobs. `null` uses the connection's default queue. |
-| `linkado.base_url` | `LINKADO_BASE_URL=https://app.linkado.ru/api/v1` | HTTPS Linkado API base URL without userinfo, query, or fragment. |
+| `linkado.url` | `LINKADO_URL=null` | Optional HTTPS origin; default `https://app.linkado.ru`. |
+| `linkado.base_url` | `LINKADO_BASE_URL=null` | Legacy full HTTPS API URL; lower priority than origin. |
 | `linkado.token` | `LINKADO_TOKEN=null` | Bearer credential used only when an SDK request is made. |
 | `linkado.program_key` | `LINKADO_PROGRAM_KEY=null` | Public Linkado program key included in events and SSO requests. |
 | `linkado.features.sso` | `LINKADO_SSO_ENABLED=false` | Enables SSO launches. |
-| `linkado.features.tracking` | `LINKADO_TRACKING_ENABLED=false` | Enables tracking rendering and attribution capture. |
-| `linkado.features.customer_events` | `LINKADO_CUSTOMER_EVENTS_ENABLED=false` | Enables customer-created and lead-created events. |
-| `linkado.features.billing_events` | `LINKADO_BILLING_EVENTS_ENABLED=false` | Enables payment and subscription events. |
-| `linkado.features.refund_events` | `LINKADO_REFUND_EVENTS_ENABLED=false` | Enables payment-refunded events. |
-| `linkado.tracking.script_url` | `LINKADO_TRACKING_SCRIPT_URL=null` | Hosted tracking script URL. Required when tracking is rendered. |
-| `linkado.tracking.endpoint_url` | `LINKADO_TRACKING_ENDPOINT_URL=null` | Hosted tracking endpoint exposed to the script. Required when tracking is rendered. |
-| `linkado.tracking.referral_parameter` | `LINKADO_REFERRAL_PARAMETER=ref` | Referral query-string parameter. |
+| `linkado.features.tracking` | `LINKADO_TRACKING_ENABLED=true` | Enables tracking rendering and attribution capture. |
+| `linkado.features.customer_events` | `LINKADO_CUSTOMER_EVENTS_ENABLED=true` | Enables customer-created and lead-created events. |
+| `linkado.features.billing_events` | `LINKADO_BILLING_EVENTS_ENABLED=true` | Enables payment and subscription events. |
+| `linkado.features.refund_events` | `LINKADO_REFUND_EVENTS_ENABLED=true` | Enables payment-refunded events. |
+| `linkado.tracking.script_url` | `LINKADO_TRACKING_SCRIPT_URL=null (resolved origin/build/tracking.js)` | Hosted tracking script URL. Required when tracking is rendered. |
+| `linkado.tracking.endpoint_url` | `LINKADO_TRACKING_ENDPOINT_URL=null (resolved API/tracking/clicks)` | Hosted tracking endpoint exposed to the script. Required when tracking is rendered. |
+| `linkado.tracking.referral_parameter` | `LINKADO_REFERRAL_PARAMETER=via` | Referral query-string parameter. |
 | `linkado.tracking.visitor_cookie` | `linkado_visitor` | Encrypted package visitor cookie name. |
 | `linkado.tracking.click_cookie` | `lk_click` | Hosted script click-cookie name. |
 | `linkado.tracking.referral_cookie` | `lk_referral` | Hosted script referral-cookie name. |
-| `linkado.tracking.ttl_seconds` | `LINKADO_ATTRIBUTION_TTL_SECONDS=2592000` | Pending attribution lifetime in seconds. |
+| `linkado.tracking.ttl_seconds` | `LINKADO_ATTRIBUTION_TTL_SECONDS=5184000` | Pending attribution lifetime in seconds. |
 | `linkado.sso.route` | `linkado.sso.launch` | Name of the package's SSO POST route. |
 | `linkado.sso.middleware` | `web`, `auth`, `throttle:6,1` | Middleware protecting SSO launches. |
 | `linkado.sso.error_redirect` | `/` | Local path after an SSO failure; unsafe values fall back to `/`. |
@@ -82,7 +89,7 @@ Every package configuration key is listed below. Values without an environment v
 - `shadow` stores an immutable, terminal local snapshot and never dispatches HTTP delivery.
 - `live` stores a pending event and dispatches its queue job only after the host transaction commits.
 
-Feature flags are evaluated after the SDK DTO identifies its event family. The default eligibility policy allows enabled features. Applications can replace it with the `DeterminesLinkadoEligibility` contract:
+`Linkado::enabled(LinkadoFeature $feature): bool` checks the package flag, mode and configuration without host policy, database access or HTTP. Use it before application policy/UI decisions. Shadow recording requires a program key and does not require a token; SSO requires live. Package operations use the same readiness check. Feature flags are evaluated after the SDK DTO identifies its event family. The default eligibility policy allows enabled features. Applications can replace it with the `DeterminesLinkadoEligibility` contract:
 
 ```php
 <?php
@@ -153,7 +160,7 @@ DB::connection(config('linkado.connection'))->transaction(
             eventFactory: fn (string $eventId): CustomerCreatedEventData => new CustomerCreatedEventData(
                 event_id: $eventId,
                 program_key: (string) config('linkado.program_key'),
-                occurred_at: now(),
+                occurred_at: $customer->created_at,
                 external_customer_id: (string) $customer->getKey(),
                 click_id: $attribution?->clickId,
                 referral_slug: $attribution?->clickId === null
@@ -169,7 +176,7 @@ Successful consumption returns attribution once and clears its click/referral va
 
 Missing, malformed, or mismatched source cookies return `null` and discard attribution for the identified visitor, retaining the same scrubbed marker until expiry. Discard rolls back with the caller and emits no `AttributionConsumed` event. An invalid or unknown visitor cookie does not alter another visitor's row. Existing integrations must supply matching source cookies; visitor-only consumption no longer returns attribution.
 
-The source key is the application's idempotency key. Repeating the same source key and payload returns the original row; reusing it for a different payload preserves the first row and emits a critical diagnostic event. Do not put email addresses, phone numbers, credentials, or other secrets in source keys.
+The source key is the application's idempotency key. Repeating the same source key and payload returns the original row; reusing it for a different payload preserves the first row and emits a critical diagnostic event. Use the original business timestamp for `occurred_at`, not the current time on each invocation. If the application repeats recording, preserve the original attribution and other payload fields from its business fact; consumption itself returns attribution only once. Do not put email addresses, phone numbers, credentials, or other secrets in source keys.
 
 Use the official `linkado-ru/php-sdk` DTOs for all supported event types:
 
@@ -182,10 +189,9 @@ Amounts are positive integers in minor currency units. Never construct a package
 
 ## Tracking
 
-Set the tracking feature and hosted URLs, then render the directive once in the page layout:
+With live credentials, tracking uses the resolved URLs by default. Render the directive once in the page layout. Optional CDN/proxy overrides are:
 
 ```dotenv
-LINKADO_TRACKING_ENABLED=true
 LINKADO_TRACKING_SCRIPT_URL=https://cdn.example.test/linkado.js
 LINKADO_TRACKING_ENDPOINT_URL=https://tracking.example.test/events
 ```
@@ -202,7 +208,7 @@ LINKADO_TRACKING_ENDPOINT_URL=https://tracking.example.test/events
 </html>
 ```
 
-The directive renders nothing when mode is `off`, tracking is disabled, or eligibility denies the request. Its two URLs must use HTTPS outside local/testing environments.
+The directive renders nothing outside `live`, without credentials, when tracking is disabled, or when eligibility denies the request. Its two URLs must use HTTPS outside local/testing environments.
 
 The script element keeps `defer` and emits `data-endpoint`, `data-program-key`, `data-referral-param`, and `data-attribution-window-days`. Compatibility aliases `data-endpoint-url` and `data-referral-parameter` contain the same endpoint and referral parameter. Values are HTML-escaped; the API token is never rendered.
 
@@ -350,7 +356,7 @@ Use `--json` for monitoring and automation. `linkado:health` exits non-zero when
 
 The package persists exact JSON bytes and their SHA-256 hash, then rehydrates the same official SDK DTO for every attempt. Network failures, HTTP 408/429/5xx responses, and valid `Retry-After` values use bounded retries. Stable 4xx responses, HTTP 409 payload conflicts, attempt exhaustion, retry-window expiry, corruption, and disabling the package terminate delivery deterministically.
 
-Automatic delivery is limited by `linkado.delivery.max_attempts` and `linkado.delivery.retry_window_seconds`. Recovery handles dispatch failures, stale claims, and lost queued jobs after the queue uniqueness lease expires (the configured claim timeout). A late worker cannot overwrite a newer claim. Switching from live to off or shadow prevents queued event delivery. A manual retry requires both `--operator` and `--reason`, never alters the original event ID or payload, and leaves an audit attempt. It authorizes one delivery even after automatic limits have expired; an abandoned manual attempt does not authorize unlimited recovery attempts.
+Automatic delivery is limited by `linkado.delivery.max_attempts` and `linkado.delivery.retry_window_seconds`. Recovery handles dispatch failures, stale claims, and lost queued jobs after the queue uniqueness lease expires (the configured claim timeout). A late worker cannot overwrite a newer claim. Switching from live to off or shadow prevents queued event delivery. Missing live credentials are checked before claim, leaving pending snapshots and attempt counts unchanged for recovery after configuration repair. A manual retry requires both `--operator` and `--reason`, never alters the original event ID or payload, and leaves an audit attempt. It authorizes one delivery even after automatic limits have expired; an abandoned manual attempt does not authorize unlimited recovery attempts.
 
 Listen to package lifecycle events for application-specific observability. Their context is intentionally sanitized; do not attach raw DTO payloads, cookies, credentials, or SSO URLs in listeners.
 
@@ -366,16 +372,16 @@ Review retention requirements for the host application and keep the daily attrib
 
 ## Upgrading
 
-The package follows Semantic Versioning. Within 1.x, additive configuration and migration changes may require publishing new resources; breaking public API changes are reserved for a new major version.
+The package follows Semantic Versioning. Within a major version, additive configuration and migration changes may require publishing new resources; breaking public API or default behavior changes require a new major version.
 
-The unreleased changes since `v1.0.0` are a minor release candidate: the supported facade/contract signatures remain compatible and identity locking is opt-in. Security behavior is stricter: visitor-only consumption and malformed/mismatched source identifiers are rejected, and unsafe SSO authorities fail closed. See the [explicit API and schema diff](docs/compatibility.md).
+Version `v2.0.0` is a major release: live defaults and enabled event families require an explicit major upgrade from `^1.x`. The supported facade/contract/getter signatures remain compatible and identity locking is opt-in. See the [explicit API and schema diff](docs/compatibility.md) and the v1-to-v2 migration below.
 
-The additive identity migration is required for upgraded capture/consume **even without an identity adapter**. Pause affected capture and registration transitions before changing package code, publish/apply the migration, then verify health in `shadow` mode with features disabled before resuming. `off` health deliberately marks database checks not applicable and is not migration proof. Do not guess or backfill legacy identity associations. Disable the affected integration before rollback; do not automatically remove the column or promise the old code's lifecycle safety.
+Consumers upgrading from v1.0 must apply the additive identity migration **even without an identity adapter**; v1.1 already includes it. The v1.1-to-v2 upgrade adds no fifth migration. Pause affected capture and registration transitions before changing package code, verify all four migrations are applied, then check health in `shadow` mode with features disabled before resuming. `off` health deliberately marks database checks not applicable and is not migration proof. Do not guess or backfill legacy identity associations. Disable the affected integration before rollback; do not automatically remove the column or promise the old code's lifecycle safety.
 
 Before upgrading:
 
 1. Read [CHANGELOG.md](CHANGELOG.md).
-2. Run `composer update linkado-ru/laravel linkado-ru/php-sdk` in a branch.
+2. After release verification, change the package constraint to `^2.0` and run `composer update linkado-ru/laravel --with-dependencies` in a branch. SDK v1.0.0 needs no separate release.
 3. Compare the published `config/linkado.php` with the package default instead of overwriting local values blindly.
 4. Publish any new migrations with `php artisan vendor:publish --tag=linkado-migrations` and run the application's normal migration process.
 5. Run the application test suite and `php artisan linkado:health --json` in `shadow` mode before resuming capture/registration and enabling `live` mode.
@@ -386,4 +392,14 @@ Required CI covers Ubuntu, PHP 8.3/8.4/8.5 with lowest/stable dependencies, and 
 
 See [the contribution guide](.github/CONTRIBUTING.md) for local validation and pull-request requirements. Security reports follow [the security policy](.github/SECURITY.md).
 
+Maintainers use the repository's development/release AI skills and [release procedure](RELEASING.md). Consuming applications use the bundled `linkado-development` Boost skill; after package upgrades, refresh installed skills with the application's Boost update workflow. Package checks, remote CI, published-version verification and hosted/application acceptance are separate evidence.
+
 Linkado Laravel is open-source software licensed under the [MIT license](LICENSE.md).
+
+## Migrating v1 to v2
+
+This is a major migration: use `^2.0` only after release verification. Existing `^1.x` consumers remain on their previous defaults. Before upgrade, preserve prior behavior through explicit mode/feature settings; manually merge published configuration without `vendor:publish --force`. Add raw `url`, retain raw legacy `base_url`, and remove old env overrides only when ready for the new defaults. SDK v1.0.0, the four published migrations, source keys and existing outbox snapshots remain unchanged.
+
+Automated tests must force mode off, blank URL/credentials and false feature flags through both PHPUnit environment readers, use an independent `APP_CONFIG_CACHE`, and explicitly enable synthetic live credentials with HTTP fakes/stray-request prevention. Hosted acceptance is separate and opt-in; pass public program/origin/referral/window settings, never a real token to browser processes.
+
+After verified release and deployment, rebuild configuration cache and restart long-running workers through the application's normal deployment workflow. Required package CI includes the complete Ubuntu PHP/dependency/database matrix. Hosted/financial acceptance and production DNS/TLS/asset/API/SSO/CORS/program/worker readiness remain release gates.

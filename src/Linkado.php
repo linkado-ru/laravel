@@ -14,6 +14,7 @@ use Linkado\Laravel\Exceptions\MissingSsoUserResolver;
 use Linkado\Laravel\Models\OutboxEvent;
 use Linkado\Laravel\Support\Attribution\AttributionManager;
 use Linkado\Laravel\Support\EligibilityContext;
+use Linkado\Laravel\Support\LinkadoConfiguration;
 use Linkado\Laravel\Support\ResolvedSsoUser;
 use Linkado\PhpSdk\DataObjects\EventData;
 
@@ -22,12 +23,18 @@ class Linkado implements DeterminesLinkadoEligibility, ResolvesLinkadoSsoUser
     public function __construct(
         private readonly RecordLinkadoEvent $recordLinkadoEvent,
         private readonly AttributionManager $attributionManager,
+        private readonly LinkadoConfiguration $configuration,
     ) {}
 
     /** @param Closure(string): EventData $eventFactory */
     public function record(string $sourceKey, Closure $eventFactory): ?OutboxEvent
     {
         return $this->recordLinkadoEvent->handle($sourceKey, $eventFactory);
+    }
+
+    public function enabled(LinkadoFeature $feature): bool
+    {
+        return $this->configuration->enabled($feature);
     }
 
     public function attribution(): AttributionManager

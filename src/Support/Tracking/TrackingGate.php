@@ -7,7 +7,6 @@ namespace Linkado\Laravel\Support\Tracking;
 use Closure;
 use Illuminate\Http\Request;
 use Linkado\Laravel\Contracts\DeterminesLinkadoEligibility;
-use Linkado\Laravel\Enums\DeliveryMode;
 use Linkado\Laravel\Enums\LinkadoFeature;
 use Linkado\Laravel\Support\EligibilityContext;
 use Linkado\Laravel\Support\LinkadoConfiguration;
@@ -25,8 +24,7 @@ final readonly class TrackingGate
     public function allows(Request $request): bool
     {
         try {
-            if ($this->configuration->mode() === DeliveryMode::Off
-                || ! $this->configuration->featureEnabled(LinkadoFeature::Tracking)) {
+            if (! $this->configuration->enabled(LinkadoFeature::Tracking)) {
                 return false;
             }
 

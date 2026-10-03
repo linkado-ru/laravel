@@ -34,6 +34,10 @@ use Saloon\Http\Faking\MockResponse;
 use Saloon\Http\PendingRequest;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     CarbonImmutable::setTestNow('2026-09-21 12:00:00');
 
     config()->set('database.connections.linkado_delivery_test', [
@@ -193,6 +197,24 @@ it('does not let a stale delivery result overwrite a replacement claim', functio
         ->and($attempts[0]->getAttribute('remote_event_id'))->toBeNull()
         ->and($attempts[1]->outcome)->toBeNull()
         ->and($attempts[1]->finished_at)->toBeNull();
+});
+
+it('sends stored events to the resolved origin independently of tracking overrides', function (): void {
+    // Arrange
+    config()->set('linkado.url', 'https://chosen.test:8443/');
+    config()->set('linkado.tracking.script_url', 'https://cdn.test/tracking.js?v=2');
+    config()->set('linkado.tracking.endpoint_url', 'https://proxy.test/clicks');
+    $data = p15EventData(EventType::CustomerCreated);
+    $event = p15Event($data);
+    $mock = new MockClient([SendEventRequest::class => MockResponse::make(p15AcceptedResponse($data->event_id), 202)]);
+    p15Connector($mock);
+
+    // Act
+    p15Deliver($event);
+
+    // Assert
+    expect($mock->getLastPendingRequest()?->getUrl())->toBe('https://chosen.test:8443/api/v1/events')
+        ->and($event->fresh()?->status)->toBe(OutboxStatus::Delivered);
 });
 
 function p15Deliver(OutboxEvent $event): void
@@ -408,3 +430,42 @@ function p15AttemptMigration(): Migration
 {
     return require __DIR__.'/../../../database/migrations/2026_01_01_000001_create_linkado_outbox_attempts_table.php';
 }
+
+it('preserves pending snapshots and attempts until live credentials are restored', function (string $setting): void {
+    // Arrange
+    $data = p15EventData(EventType::CustomerCreated);
+    $event = p15Event($data);
+    $identity = [$event->event_id, $event->payload, $event->payload_sha256];
+    $credential = config('linkado.'.$setting);
+    config()->set('linkado.'.$setting, '');
+    $resolutions = 0;
+    app()->bind(LinkadoConnector::class, function () use (&$resolutions): never {
+        $resolutions++;
+
+        throw new LogicException('Connector must stay unresolved');
+    });
+
+    // Act
+    p15Deliver($event);
+
+    // Assert
+    expect($event->fresh()?->status)->toBe(OutboxStatus::Pending)
+        ->and($event->fresh()?->attempt_count)->toBe(0)
+        ->and(OutboxAttempt::query()->count())->toBe(0)
+        ->and($resolutions)->toBe(0);
+
+    // Act: recovery uses the same stored snapshot after fixing configuration.
+    config()->set('linkado.'.$setting, $credential);
+    $connector = new LinkadoConnector('synthetic-recovery-token', 'https://linkado.test/api/v1');
+    $mock = new MockClient([SendEventRequest::class => MockResponse::make(p15AcceptedResponse($data->event_id), 202)]);
+    $connector->withMockClient($mock);
+    app()->instance(LinkadoConnector::class, $connector);
+    p15Deliver($event);
+
+    // Assert
+    $stored = $event->fresh();
+    expect($stored?->status)->toBe(OutboxStatus::Delivered)
+        ->and([$stored?->event_id, $stored?->payload, $stored?->payload_sha256])->toBe($identity)
+        ->and(OutboxAttempt::query()->count())->toBe(1)
+        ->and($mock->getRecordedResponses())->toHaveCount(1);
+})->with(['token', 'program_key']);

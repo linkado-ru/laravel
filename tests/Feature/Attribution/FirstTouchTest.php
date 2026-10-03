@@ -15,6 +15,10 @@ use Linkado\Laravel\Facades\Linkado;
 use Linkado\Laravel\Tests\Support\DatabaseConfiguration;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     config()->set('database.connections.first_touch', DatabaseConfiguration::externalOrSqlite());
     config()->set('linkado.connection', 'first_touch');
     config()->set('linkado.tracking.ttl_seconds', 120);

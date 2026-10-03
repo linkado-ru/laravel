@@ -7,6 +7,10 @@ use Illuminate\Support\Str;
 use Symfony\Component\Process\Process;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     config()->set('linkado.mode', 'live');
     config()->set('linkado.features.tracking', true);
     config()->set('linkado.program_key', 'public-program-a');

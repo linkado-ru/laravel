@@ -14,6 +14,10 @@ use Linkado\Laravel\Http\Middleware\CapturePendingAttribution;
 use Symfony\Component\HttpFoundation\Response;
 
 beforeEach(function (): void {
+    config()->set('linkado.token', 'synthetic-test-token');
+    config()->set('linkado.program_key', 'synthetic-test-program');
+    config()->set('linkado.tracking.referral_parameter', 'ref');
+    config()->set('linkado.tracking.ttl_seconds', 2592000);
     config()->set('database.connections.host_test', [
         'driver' => 'sqlite',
         'database' => ':memory:',
