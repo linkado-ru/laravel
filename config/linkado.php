@@ -18,6 +18,7 @@ return [
         'refund_events' => env('LINKADO_REFUND_EVENTS_ENABLED', true),
     ],
     'tracking' => [
+        'last_valid_visit' => false,
         'script_url' => env('LINKADO_TRACKING_SCRIPT_URL'),
         'endpoint_url' => env('LINKADO_TRACKING_ENDPOINT_URL'),
         'referral_parameter' => env('LINKADO_REFERRAL_PARAMETER', 'via'),

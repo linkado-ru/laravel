@@ -29,7 +29,7 @@ it('publishes Linkado resources safely when run more than once', function (): vo
 
     expect($this->files->exists($this->publishedConfigPath))->toBeTrue()
         ->and($this->files->exists($this->publishedLanguagePath.'/en/messages.php'))->toBeTrue()
-        ->and($publishedMigrations)->toHaveCount(4)
+        ->and($publishedMigrations)->toHaveCount(5)
         ->and(collect($publishedMigrations)->map(fn (string $path): string => basename($path))->implode("\n"))
         ->toContain('create_linkado_outbox_events_table.php')
         ->toContain('create_linkado_outbox_attempts_table.php')
@@ -62,7 +62,7 @@ it('preserves published migrations across later installation and publication', f
     $this->artisan('linkado:install')->assertSuccessful();
 
     $original = glob($this->migrationPattern) ?: [];
-    expect($original)->toHaveCount(4);
+    expect($original)->toHaveCount(5);
     $this->files->append($original[0], "\n// Host migration customization.\n");
     $contents = array_map(fn (string $path): string => $this->files->get($path), $original);
 
@@ -96,8 +96,8 @@ it('can migrate before and after later installation without recreating tables', 
     $this->artisan('linkado:install')->assertSuccessful();
     $this->artisan('migrate', ['--force' => true])->assertSuccessful();
 
-    expect(glob($this->migrationPattern))->toHaveCount(4)
-        ->and(DB::table('migrations')->count())->toBe(4)
+    expect(glob($this->migrationPattern))->toHaveCount(5)
+        ->and(DB::table('migrations')->count())->toBe(5)
         ->and(Schema::hasTable('linkado_outbox_events'))->toBeTrue()
         ->and(Schema::hasTable('linkado_outbox_attempts'))->toBeTrue()
         ->and(Schema::hasTable('linkado_pending_attributions'))->toBeTrue()

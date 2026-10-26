@@ -12,7 +12,9 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Linkado\Laravel\Support\Attribution\AttributionIdentifiers;
 use Linkado\Laravel\Support\Attribution\IdentityLock;
+use Linkado\Laravel\Support\Attribution\PreparedAttribution;
 use Linkado\Laravel\Support\LinkadoConfiguration;
+use Linkado\PhpSdk\DataObjects\TrackingClickData;
 use RuntimeException;
 
 final readonly class CapturePendingAttribution
@@ -21,6 +23,7 @@ final readonly class CapturePendingAttribution
         private DatabaseManager $database,
         private LinkadoConfiguration $configuration,
         private IdentityLock $identityLock,
+        private PreparedAttribution $preparedAttribution,
     ) {}
 
     public function handle(string $visitorId, mixed $clickId, mixed $referralSlug): void
@@ -36,6 +39,21 @@ final readonly class CapturePendingAttribution
 
     private function execute(?Request $request, string $visitorId, mixed $clickId, mixed $referralSlug): void
     {
+        $verified = null;
+
+        if ($this->configuration->lastValidVisit()) {
+            if ($request === null) {
+                return;
+            }
+            $verified = $this->preparedAttribution->prepare($request);
+
+            if ($verified === null) {
+                return;
+            }
+            $clickId = $verified->click_id;
+            $referralSlug = null;
+        }
+
         if (! AttributionIdentifiers::validCandidates($clickId, $referralSlug)) {
             return;
         }
@@ -52,14 +70,14 @@ final readonly class CapturePendingAttribution
 
         // Only a transaction owned by capture may be replayed after a deadlock.
         $connection->transaction(
-            fn () => $this->identityLock->run($request, function (?string $identityHash) use ($connection, $visitorHash, $clickId, $referralSlug): void {
-                $this->capture($connection, $visitorHash, $clickId, $referralSlug, $identityHash);
+            fn () => $this->identityLock->run($request, function (?string $identityHash) use ($connection, $visitorHash, $clickId, $referralSlug, $verified): void {
+                $this->capture($connection, $visitorHash, $clickId, $referralSlug, $identityHash, $verified);
             }),
             attempts: $connection->transactionLevel() === 0 ? 3 : 1,
         );
     }
 
-    private function capture(Connection $connection, string $visitorHash, ?string $clickId, ?string $referralSlug, ?string $identityHash): void
+    private function capture(Connection $connection, string $visitorHash, ?string $clickId, ?string $referralSlug, ?string $identityHash, ?TrackingClickData $verified): void
     {
         $query = $connection->table('linkado_pending_attributions')->where('visitor_hash', $visitorHash);
         $row = $query->lockForUpdate()->first();
@@ -100,8 +118,40 @@ final readonly class CapturePendingAttribution
             throw new RuntimeException('The stored attribution expiry is invalid.');
         }
 
+        if ($verified !== null) {
+            if ($verified->expires_at <= $now || ($row !== null && ($row->identity_hash !== $identityHash || $row->consumed_at !== null))) {
+                return;
+            }
+
+            if ($row === null || $row->program_key !== $verified->program_key || AttributionIdentifiers::visitOrder($row->visit_order) === null || AttributionIdentifiers::visitOrder($row->visit_order) < $verified->visit_order) {
+                $query->update([
+                    'program_key' => $verified->program_key,
+                    'identity_hash' => $identityHash,
+                    'click_id' => $verified->click_id,
+                    'referral_slug' => null,
+                    'visit_order' => $verified->visit_order,
+                    'captured_at' => $verified->created_at,
+                    'expires_at' => $verified->expires_at,
+                    'consumed_at' => null,
+                    'updated_at' => $now,
+                ]);
+            }
+
+            return;
+        }
+
+        // Legacy writes must not inherit proof for a different click. Older schemas omit these columns.
+        $unverified = [];
+
+        foreach (['visit_order', 'program_key'] as $column) {
+            if ($row !== null && property_exists($row, $column)) {
+                $unverified[$column] = null;
+            }
+        }
+
         if ($created || ($row !== null && CarbonImmutable::parse($expiresAt)->lessThanOrEqualTo($now))) {
             $query->update([
+                ...$unverified,
                 'identity_hash' => $identityHash,
                 'click_id' => $clickId,
                 'referral_slug' => $clickId === null ? $referralSlug : null,
@@ -120,6 +170,7 @@ final readonly class CapturePendingAttribution
 
         if ($row !== null && $row->consumed_at === null && $row->click_id === null && $clickId !== null) {
             $query->update([
+                ...$unverified,
                 'click_id' => $clickId,
                 'referral_slug' => null,
                 'updated_at' => $now,

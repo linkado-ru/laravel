@@ -2,6 +2,20 @@
 
 All notable changes to `linkado-ru/laravel` are documented here. The package follows [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+## 2.1.0 - 2026-10-26
+
+### Added
+
+- Opt-in `tracking.last_valid_visit`, atomic v1-cookie consumption, authenticated pre-transaction click verification, server-ordered replacement/absolute expiry and transactionally frozen registration capture. Existing first-touch defaults and public event DTOs remain compatible.
+- `AttributionManager::prepare(Request): void` and a forward migration adding nullable `visit_order`/`program_key` to pending attributions. No legacy identity backfill or historical migration rewrite.
+- PHP SDK requirement `^1.1` for the new tracking resolver. Consumer lock updates, the forward schema migration and verified-mode activation require the application's own acceptance and rollout.
+
+### Fixed
+
+- Preserve verified clicks across partner slug renames, and clear stale verification metadata when a legacy capture replaces or upgrades a candidate.
+
 ## 2.0.0 - 2026-10-03
 
 ### Breaking defaults

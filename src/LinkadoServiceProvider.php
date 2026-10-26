@@ -29,6 +29,7 @@ use Linkado\Laravel\Exceptions\InvalidLinkadoConfiguration;
 use Linkado\Laravel\Http\Middleware\CapturePendingAttribution;
 use Linkado\Laravel\Http\Middleware\EnsureLinkadoVisitor;
 use Linkado\Laravel\Support\Attribution\AttributionManager;
+use Linkado\Laravel\Support\Attribution\PreparedAttribution;
 use Linkado\Laravel\Support\Database\RequiresActiveTransaction;
 use Linkado\Laravel\Support\Events\EventFeatureMap;
 use Linkado\Laravel\Support\Events\EventPayloadCodec;
@@ -62,6 +63,7 @@ class LinkadoServiceProvider extends ServiceProvider
         $this->app->singleton(EventFeatureMap::class);
 
         $this->app->singleton(AttributionManager::class);
+        $this->app->singleton(PreparedAttribution::class);
 
         $this->app->bind(CreateSsoLink::class, fn (Application $app): CreateSsoLink => new CreateSsoLink(
             configuration: $app->make(LinkadoConfiguration::class),
@@ -115,6 +117,7 @@ class LinkadoServiceProvider extends ServiceProvider
 
         try {
             EncryptCookies::except([
+                'lk_attribution',
                 $configuration->trackingClickCookie(),
                 $configuration->trackingReferralCookie(),
             ]);

@@ -6,6 +6,7 @@ Laravel 13 integration for the Linkado affiliate platform. The package captures 
 
 - PHP 8.3 or later
 - Laravel 13
+- Linkado PHP SDK ^1.1 (resolved by Composer)
 - a queue worker for live event delivery
 - Laravel's scheduler for automatic recovery and attribution pruning
 
@@ -136,11 +137,27 @@ Route::middleware(['web', 'linkado.attribution'])->group(function (): void {
 });
 ```
 
-The package manages its encrypted visitor cookie on the `web` middleware group. Capture gives click IDs precedence over referral slugs and stores only a SHA-256 visitor hash in the database. The first active touch fixes the attribution window: later captures do not replace it or extend its TTL. A referral slug may upgrade to a click, retaining the original capture and expiry times. At expiry (including the exact boundary), a new touch starts a new window.
+The package manages its encrypted visitor cookie on the `web` middleware group. Capture gives click IDs precedence over referral slugs and stores only a SHA-256 visitor hash in the database. With the default `linkado.tracking.last_valid_visit=false`, the first active touch fixes the attribution window: later captures do not replace it or extend its TTL. A referral slug may upgrade to a click, retaining the original capture and expiry times. At expiry (including the exact boundary), a new touch starts a new window.
 
 Click IDs must pass Laravel's `Str::isUlid`; referral slugs must contain 1–100 lowercase ASCII letters or digits, optionally separated by single hyphens. Identifiers are never trimmed, truncated, or case-normalized. Null and empty strings mean absent; malformed source candidates reject capture or consumption without falling back to another source. For referral capture, an existing referral cookie takes precedence over the configured query parameter.
 
 Consumption requires the visitor cookie and an exact matching source cookie: a click row requires the same click, and a referral row requires the same referral with no click candidate. Query parameters cannot confirm consumption, and consumption never upgrades a referral to a click. A stored row must contain exactly one valid source. Matching establishes consistency with the captured browser cookies; it does not verify that the click exists in Linkado.
+
+### Verified last-valid visits (v2.1)
+
+Set `linkado.tracking.last_valid_visit=true` only after installing PHP SDK `^1.1` and Laravel package `^2.1`, deploying the authenticated Linkado resolver, publishing/applying the additive `2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php` migration, and verifying the consumer. The original four migrations and all historical outbox/identity data remain unchanged. Existing rows are not remotely verified or backfilled by migration. The default remains the legacy strategy described above.
+
+The atomic `lk_attribution` v1 cookie takes precedence over `lk_click`/`lk_referral`; malformed or foreign-program snapshots never fall back to the pair or a query slug. Legacy click cookies can be verified when the atomic cookie is absent. Slug-only/query captures are unavailable in this mode: wait for the hosted script's confirmed click. Browser sequence, expiry and IDs are untrusted. The package resolves click/program/slug/order/creation/expiry via authenticated `POST tracking/clicks/resolve` using the integration's existing `events:write` ability. No raw cookie or fingerprint is sent.
+
+The verified click identifies its original participation even if the partner renamed the slug after the visit. A syntactically valid browser slug need not equal the current resolved slug. Legacy captures that replace a candidate clear its verification metadata; switching the opt-in flag back on cannot authenticate a different click using an old visit's proof.
+
+Call `Linkado::attribution()->prepare($request)` **before** the host registration transaction, after resolving eligibility/anonymous identity. The capture middleware prepares outside its own transaction. Verification uses one request with a one-second connection/two-second total timeout, without retry. Shadow/off/denied tracking does not verify. An outage or invalid response preserves pending state and normal signup; a matching previously verified click may still be consumed before expiry. Verification is request-local, bound to unchanged source cookies/program, and is never performed inside an active package connection transaction.
+
+Inside the host transaction, consume applies the prepared candidate under host-identity then pending-row locks. A larger server-issued visit order replaces only an unconsumed, same-identity candidate and uses the server's absolute expiry. A repeat read of the same click cannot extend it. A newer click from the same partner starts its own refreshed window. A stale validated request cannot overwrite a newer stored candidate; consumption uses that newest verified row. Invalid mismatches return no attribution and scrub only the owned row into a consumed marker. The host identity must close on claim, including organic/disabled recording paths, preventing capture after pruning or visitor rotation. Freeze the returned value in the outbox with the registration fact; delivery never reads cookies again.
+
+The snapshot is linearized when registration acquires the identity/pending lock. Only completed browser click snapshots and already captured verified visits are available: a fetch whose result has not reached the browser/server capture before that point cannot be reconstructed. Browser navigation, supported Web Locks clients, mixed-version rollout and actual hosted/registration acceptance require separate testing; source overlays do not establish installed release behavior.
+
+The following transaction example is shared by both strategies. For the verified strategy, call `Linkado::attribution()->prepare($request)` before entering it.
 
 Consume attribution and record the related SDK event inside the same transaction and on the connection configured by `linkado.connection`:
 
@@ -374,14 +391,16 @@ Review retention requirements for the host application and keep the daily attrib
 
 The package follows Semantic Versioning. Within a major version, additive configuration and migration changes may require publishing new resources; breaking public API or default behavior changes require a new major version.
 
-Version `v2.0.0` is a major release: live defaults and enabled event families require an explicit major upgrade from `^1.x`. The supported facade/contract/getter signatures remain compatible and identity locking is opt-in. See the [explicit API and schema diff](docs/compatibility.md) and the v1-to-v2 migration below.
+Version `v2.1.0` adds opt-in verified visits and a fifth, forward-only migration while requiring PHP SDK `^1.1`. Publish/apply that migration on every package connection when upgrading to v2.1, preserve the original four, and keep `tracking.last_valid_visit=false` until the matching server endpoint and host acceptance are ready.
 
-Consumers upgrading from v1.0 must apply the additive identity migration **even without an identity adapter**; v1.1 already includes it. The v1.1-to-v2 upgrade adds no fifth migration. Pause affected capture and registration transitions before changing package code, verify all four migrations are applied, then check health in `shadow` mode with features disabled before resuming. `off` health deliberately marks database checks not applicable and is not migration proof. Do not guess or backfill legacy identity associations. Disable the affected integration before rollback; do not automatically remove the column or promise the old code's lifecycle safety.
+Version `v2.0.0` was a major release: live defaults and enabled event families require an explicit major upgrade from `^1.x`. The supported facade/contract/getter signatures remain compatible and identity locking is opt-in. See the [explicit API and schema diff](docs/compatibility.md) and the v1-to-v2 migration below.
+
+Consumers upgrading from v1.0 must apply the additive identity migration **even without an identity adapter**; v1.1 already includes it. The historical v1.1-to-v2.0 upgrade added no fifth migration; v2.1 adds the visit-order migration above. Pause affected capture and registration transitions before changing package code, verify all migrations required by the target version are applied, then check health in `shadow` mode with features disabled before resuming. `off` health deliberately marks database checks not applicable and is not migration proof. Do not guess or backfill legacy identity associations. Disable the affected integration before rollback; do not automatically remove the column or promise the old code's lifecycle safety.
 
 Before upgrading:
 
 1. Read [CHANGELOG.md](CHANGELOG.md).
-2. After release verification, change the package constraint to `^2.0` and run `composer update linkado-ru/laravel --with-dependencies` in a branch. SDK v1.0.0 needs no separate release.
+2. After release verification, change the package constraint to `^2.0` and run `composer update linkado-ru/laravel --with-dependencies` in a branch. The v2.1 target requires PHP SDK `^1.1`.
 3. Compare the published `config/linkado.php` with the package default instead of overwriting local values blindly.
 4. Publish any new migrations with `php artisan vendor:publish --tag=linkado-migrations` and run the application's normal migration process.
 5. Run the application test suite and `php artisan linkado:health --json` in `shadow` mode before resuming capture/registration and enabling `live` mode.
@@ -396,9 +415,9 @@ Maintainers use the repository's development/release AI skills and [release proc
 
 Linkado Laravel is open-source software licensed under the [MIT license](LICENSE.md).
 
-## Migrating v1 to v2
+## Historical migration: v1 to v2.0
 
-This is a major migration: use `^2.0` only after release verification. Existing `^1.x` consumers remain on their previous defaults. Before upgrade, preserve prior behavior through explicit mode/feature settings; manually merge published configuration without `vendor:publish --force`. Add raw `url`, retain raw legacy `base_url`, and remove old env overrides only when ready for the new defaults. SDK v1.0.0, the four published migrations, source keys and existing outbox snapshots remain unchanged.
+This is a major migration: use `^2.0` only after release verification. Existing `^1.x` consumers remain on their previous defaults. Before upgrade, preserve prior behavior through explicit mode/feature settings; manually merge published configuration without `vendor:publish --force`. Add raw `url`, retain raw legacy `base_url`, and remove old env overrides only when ready for the new defaults. For v2.0, SDK v1.0.0 and the four published migrations remained unchanged. A current v2.1 target additionally requires SDK `^1.1` and the forward visit-order migration described above. Source keys and existing outbox snapshots remain unchanged.
 
 Automated tests must force mode off, blank URL/credentials and false feature flags through both PHPUnit environment readers, use an independent `APP_CONFIG_CACHE`, and explicitly enable synthetic live credentials with HTTP fakes/stray-request prevention. Hosted acceptance is separate and opt-in; pass public program/origin/referral/window settings, never a real token to browser processes.
 

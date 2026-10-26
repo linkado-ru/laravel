@@ -2,6 +2,14 @@
 
 `linkado-ru/laravel` versions come from Git tags; keep `composer.json` versionless. This procedure separates **preparation**, **publication**, and **post-release verification**. For **v2.0.0**, the live/feature defaults require a major upgrade even though existing public signatures remain compatible. The PHP SDK remains v1.0.0; this release does not require a separate SDK release.
 
+## Current release: v2.1.0
+
+The v2.0-specific statements below are historical. For v2.1.0, use the same staged procedure with release version `2.1.0` and annotated tag `v2.1.0`. Publish PHP SDK v1.1.0 first: the Laravel package now requires `^1.1`. Keep both manifests versionless. Verify the installed SDK source/dist reference rather than a sibling-source overlay.
+
+V2.1 adds opt-in verified visits and a fifth forward migration, `2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php`. Preserve the original four migrations byte-for-byte; require all five in the candidate and published dist, publish them idempotently, and run the migration only in a disposable verification consumer. Preserve existing outbox/identity history. Real application migration and enabling `tracking.last_valid_visit` are separate rollout steps.
+
+Release checks still require the full nine-job Ubuntu CI matrix for the exact release commit before tagging, plus clean Packagist dist installation, discovery, migration and Boost checks. Use exact `linkado-ru/laravel:2.1.0` for post-release verification and confirm it resolves a compatible released PHP SDK. Historical v2.0 commands and four-migration counts below must be substituted with this release's version and five-migration contract.
+
 ## Authorization and SemVer
 
 Read `git status --short`, staged and unstaged diffs, and the user's request before starting. Preserve existing candidate work. Continue through steps already authorized without asking again. Preparation does not authorize staging/committing, pushing, tagging, Packagist mutation or deployment; obtain missing authorization only when the concrete reviewed result is ready for that next action.

@@ -14,6 +14,7 @@ use Linkado\Laravel\Events\AttributionConsumed;
 use Linkado\Laravel\Support\Attribution\AttributionIdentifiers;
 use Linkado\Laravel\Support\Attribution\ConsumedAttribution;
 use Linkado\Laravel\Support\Attribution\IdentityLock;
+use Linkado\Laravel\Support\Attribution\PreparedAttribution;
 use Linkado\Laravel\Support\Database\RequiresActiveTransaction;
 use Linkado\Laravel\Support\LinkadoConfiguration;
 
@@ -24,6 +25,8 @@ final readonly class ConsumePendingAttribution
         private LinkadoConfiguration $configuration,
         private Dispatcher $events,
         private IdentityLock $identityLock,
+        private CapturePendingAttribution $capture,
+        private PreparedAttribution $preparedAttribution,
     ) {}
 
     public function handle(Request $request): ?ConsumedAttribution
@@ -43,6 +46,10 @@ final readonly class ConsumePendingAttribution
 
         if (! is_string($visitorId) || ! Str::isUlid($visitorId)) {
             return null;
+        }
+
+        if ($this->configuration->lastValidVisit() && $this->preparedAttribution->cached($request) !== null) {
+            $this->capture->handleRequest($request, $visitorId, null, null);
         }
 
         $row = $connection->table('linkado_pending_attributions')
@@ -74,6 +81,15 @@ final readonly class ConsumePendingAttribution
             && ((AttributionIdentifiers::click($row->click_id) && $row->referral_slug === null && $row->click_id === $clickCookie)
                 || ($row->click_id === null && AttributionIdentifiers::referral($row->referral_slug)
                     && AttributionIdentifiers::absent($clickCookie) && $row->referral_slug === $referralCookie));
+
+        if ($this->configuration->lastValidVisit()) {
+            $candidate = $this->preparedAttribution->candidate($request);
+            $verified = $this->preparedAttribution->cached($request);
+            $order = AttributionIdentifiers::visitOrder($row->visit_order);
+            $matches = $row->program_key === $this->configuration->programKey() && $order !== null && $candidate !== null
+                && ($candidate['click_id'] === $row->click_id
+                    || ($verified !== null && $verified->visit_order <= $order));
+        }
 
         $connection->table('linkado_pending_attributions')->where('id', $row->id)->update([
             'click_id' => null,

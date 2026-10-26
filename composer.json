@@ -18,7 +18,7 @@
     "require": {
         "php": "^8.3",
         "illuminate/support": "^13.0",
-        "linkado-ru/php-sdk": "^1.0"
+        "linkado-ru/php-sdk": "^1.1"
     },
     "require-dev": {
         "larastan/larastan": "^3.12.2",

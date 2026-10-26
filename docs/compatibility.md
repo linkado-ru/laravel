@@ -1,3 +1,13 @@
+# Compatibility: v2.0.0 to v2.1.0
+
+The existing v1.1→v2.0 history below remains unchanged. Laravel v2.1.0 adds an opt-in capability and requires PHP SDK `^1.1`, whose v1.1.0 release adds the authenticated resolver resource. Defaults and existing event/SSO APIs remain compatible. Package publication does not establish application migration, activation or hosted acceptance.
+
+Before enabling `tracking.last_valid_visit`, deploy `POST /api/v1/tracking/clicks/resolve`, install the reviewed SDK and Laravel package, publish/apply `2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php`, merge configuration manually, call `prepare` outside the registration transaction and retain consume-before-claim/outbox in the transaction. The migration adds nullable server `visit_order` and `program_key` only; the prior four migration files and historical rows are preserved. Generic first-touch behavior remains the default. New verified mode intentionally refuses unverified legacy pending rows, slug-only sources, malformed snapshots and HTTP inside a host transaction. Pause affected capture/signup for coordinated cutover; do not enable the flag on old code/schema. Rollback must disable the flag before old code resumes; do not drop evidence or migrations automatically.
+
+Renaming a participation slug does not invalidate its existing verified clicks. Legacy replacement/upgrade clears verification metadata when those columns exist, while legacy-only schemas remain supported. The Linkado resolver has its own per-credential rate budget, separate from event ingestion.
+
+The isolated test source overlays use explicit `LINKADO_TEST_PHP_SDK_PATH` (package) and `LINKADO_TEST_LARAVEL_PACKAGE_PATH` (merchant) with test-only Composer loaders. They change neither installed vendor files nor Composer locks. They prove source-candidate behavior only. Release SHA/CI/Packagist references and clean installed consumption must be verified for each release; hosted browser acceptance remains an independent application gate. See README for ordering, availability and in-flight-navigation limits.
+
 # Compatibility: v1.1.0 to v2.0.0
 
 V1.1.0 baseline: `9356205342526b1b41cb9778da46db9ba16d74ca`. V2 is intentionally major because defaults change. This document does not assert publication, remote readiness or completed hosted/financial acceptance.

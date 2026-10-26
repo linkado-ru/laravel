@@ -32,4 +32,11 @@ final class AttributionIdentifiers
         return (self::absent($click) || self::click($click))
             && (self::absent($referral) || self::referral($referral));
     }
+
+    public static function visitOrder(mixed $value): ?int
+    {
+        $order = filter_var($value, FILTER_VALIDATE_INT);
+
+        return is_int($order) && $order > 0 ? $order : null;
+    }
 }

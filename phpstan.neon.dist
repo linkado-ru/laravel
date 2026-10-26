@@ -1,4 +1,6 @@
 parameters:
+    bootstrapFiles:
+        - tests/candidate-bootstrap.php
     level: max
     configDirectories:
         - config

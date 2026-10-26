@@ -220,6 +220,8 @@ it('creates the exact pending attribution schema', function (): void {
         'created_at',
         'updated_at',
         'identity_hash',
+        'visit_order',
+        'program_key',
     ])->and(linkadoSchema()->getColumnType('linkado_pending_attributions', 'id'))->toBeIn(['bigint', 'int8', 'integer'])
         ->and(linkadoIndexes('linkado_pending_attributions'))->toBe([
             'expires_at' => ['columns' => ['expires_at'], 'unique' => false, 'primary' => false],
