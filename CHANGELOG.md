@@ -15,6 +15,7 @@ All notable changes to `linkado-ru/laravel` are documented here. The package fol
 ### Fixed
 
 - Preserve verified clicks across partner slug renames, and clear stale verification metadata when a legacy capture replaces or upgrades a candidate.
+- Keep row-creation and expiry branches explicit for current static analysis, and wire independent-process concurrency fixtures to the prepared-attribution dependencies.
 
 ## 2.0.0 - 2026-10-03
 

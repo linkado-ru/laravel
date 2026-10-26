@@ -81,7 +81,6 @@ final readonly class CapturePendingAttribution
     {
         $query = $connection->table('linkado_pending_attributions')->where('visitor_hash', $visitorHash);
         $row = $query->lockForUpdate()->first();
-        $created = false;
 
         if ($row === null) {
             try {
@@ -95,7 +94,6 @@ final readonly class CapturePendingAttribution
                         'updated_at' => now(),
                     ]);
                 });
-                $created = true;
             } catch (UniqueConstraintViolationException $exception) {
                 if (! $this->isVisitorConflict($connection, $exception)) {
                     throw $exception;
@@ -112,10 +110,14 @@ final readonly class CapturePendingAttribution
         // Read the clock only after acquiring the existing row or inserting our locked row.
         $now = CarbonImmutable::now();
 
-        $expiresAt = $row?->expires_at;
+        $expiresAt = null;
 
-        if ($row !== null && ! is_string($expiresAt) && ! $expiresAt instanceof DateTimeInterface) {
-            throw new RuntimeException('The stored attribution expiry is invalid.');
+        if ($row !== null) {
+            $expiresAt = $row->expires_at;
+
+            if (! is_string($expiresAt) && ! $expiresAt instanceof DateTimeInterface) {
+                throw new RuntimeException('The stored attribution expiry is invalid.');
+            }
         }
 
         if ($verified !== null) {
@@ -149,7 +151,7 @@ final readonly class CapturePendingAttribution
             }
         }
 
-        if ($created || ($row !== null && CarbonImmutable::parse($expiresAt)->lessThanOrEqualTo($now))) {
+        if ($row === null || CarbonImmutable::parse($expiresAt)->lessThanOrEqualTo($now)) {
             $query->update([
                 ...$unverified,
                 'identity_hash' => $identityHash,
@@ -164,11 +166,11 @@ final readonly class CapturePendingAttribution
             return;
         }
 
-        if ($row !== null && $row->identity_hash !== $identityHash) {
+        if ($row->identity_hash !== $identityHash) {
             return;
         }
 
-        if ($row !== null && $row->consumed_at === null && $row->click_id === null && $clickId !== null) {
+        if ($row->consumed_at === null && $row->click_id === null && $clickId !== null) {
             $query->update([
                 ...$unverified,
                 'click_id' => $clickId,

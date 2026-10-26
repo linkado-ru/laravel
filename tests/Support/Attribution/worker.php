@@ -12,11 +12,14 @@ use Illuminate\Events\Dispatcher;
 use Illuminate\Http\Request;
 use Linkado\Laravel\Actions\CapturePendingAttribution;
 use Linkado\Laravel\Actions\ConsumePendingAttribution;
+use Linkado\Laravel\Contracts\DeterminesLinkadoEligibility;
 use Linkado\Laravel\Contracts\LocksLinkadoAttributionIdentity;
 use Linkado\Laravel\Events\AttributionConsumed;
 use Linkado\Laravel\Support\Attribution\IdentityLock;
+use Linkado\Laravel\Support\Attribution\PreparedAttribution;
 use Linkado\Laravel\Support\Database\RequiresActiveTransaction;
 use Linkado\Laravel\Support\LinkadoConfiguration;
+use Linkado\Laravel\Support\Tracking\TrackingGate;
 use Linkado\Laravel\Tests\Support\Attribution\HostIdentityAdapter;
 use Linkado\Laravel\Tests\Support\DatabaseConfiguration;
 
@@ -67,6 +70,12 @@ try {
     ]]));
     $transaction = new RequiresActiveTransaction($capsule->getDatabaseManager(), $configuration);
     $identityLock = new IdentityLock($container, $transaction);
+    $preparedAttribution = new PreparedAttribution(
+        $capsule->getDatabaseManager(),
+        $configuration,
+        new TrackingGate($configuration, fn (): DeterminesLinkadoEligibility => $container->make(DeterminesLinkadoEligibility::class)),
+    );
+    $capture = new CapturePendingAttribution($capsule->getDatabaseManager(), $configuration, $identityLock, $preparedAttribution);
     $eventCount = 0;
     $events->listen(AttributionConsumed::class, function () use (&$eventCount): void {
         $eventCount++;
@@ -112,7 +121,6 @@ try {
         if ($options['outer'] ?? false) {
             $connection->beginTransaction();
         }
-        $capture = new CapturePendingAttribution($capsule->getDatabaseManager(), $configuration, $identityLock);
 
         if ($options['identity_binding'] ?? false) {
             $capture->handleRequest($request, $options['visitor'], $options['click'] ?? null, $options['slug'] ?? null);
@@ -125,7 +133,7 @@ try {
             $connection->commit();
         }
     } else {
-        $consume = new ConsumePendingAttribution($transaction, $configuration, $events, $identityLock);
+        $consume = new ConsumePendingAttribution($transaction, $configuration, $events, $identityLock, $capture, $preparedAttribution);
         $connection->beginTransaction();
         $snapshot = $consume->handle($request);
 
