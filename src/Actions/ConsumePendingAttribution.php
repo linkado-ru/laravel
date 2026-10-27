@@ -48,8 +48,8 @@ final readonly class ConsumePendingAttribution
             return null;
         }
 
-        if ($this->configuration->lastValidVisit() && $this->preparedAttribution->cached($request) !== null) {
-            $this->capture->handleRequest($request, $visitorId, null, null);
+        if ($this->preparedAttribution->cached($request) !== null) {
+            $this->capture->handle($request, $visitorId);
         }
 
         $row = $connection->table('linkado_pending_attributions')
@@ -75,21 +75,13 @@ final readonly class ConsumePendingAttribution
             return null;
         }
 
-        $clickCookie = $request->cookie($this->configuration->trackingClickCookie());
-        $referralCookie = $request->cookie($this->configuration->trackingReferralCookie());
-        $matches = AttributionIdentifiers::validCandidates($clickCookie, $referralCookie)
-            && ((AttributionIdentifiers::click($row->click_id) && $row->referral_slug === null && $row->click_id === $clickCookie)
-                || ($row->click_id === null && AttributionIdentifiers::referral($row->referral_slug)
-                    && AttributionIdentifiers::absent($clickCookie) && $row->referral_slug === $referralCookie));
-
-        if ($this->configuration->lastValidVisit()) {
-            $candidate = $this->preparedAttribution->candidate($request);
-            $verified = $this->preparedAttribution->cached($request);
-            $order = AttributionIdentifiers::visitOrder($row->visit_order);
-            $matches = $row->program_key === $this->configuration->programKey() && $order !== null && $candidate !== null
-                && ($candidate['click_id'] === $row->click_id
-                    || ($verified !== null && $verified->visit_order <= $order));
-        }
+        $candidate = $this->preparedAttribution->candidate($request);
+        $verified = $this->preparedAttribution->cached($request);
+        $order = AttributionIdentifiers::visitOrder($row->visit_order);
+        $matches = AttributionIdentifiers::click($row->click_id) && $row->referral_slug === null
+            && $row->program_key === $this->configuration->programKey() && $order !== null && $candidate !== null
+            && ($candidate['click_id'] === $row->click_id
+                || ($verified !== null && $verified->visit_order <= $order));
 
         $connection->table('linkado_pending_attributions')->where('id', $row->id)->update([
             'click_id' => null,
@@ -105,8 +97,8 @@ final readonly class ConsumePendingAttribution
         $connection->afterCommit(fn (): mixed => $this->events->dispatch(new AttributionConsumed($consumedAt)));
 
         return new ConsumedAttribution(
-            clickId: is_string($row->click_id) ? $row->click_id : null,
-            referralSlug: is_string($row->referral_slug) ? $row->referral_slug : null,
+            clickId: $row->click_id,
+            referralSlug: null,
         );
     }
 }

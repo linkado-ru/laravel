@@ -9,8 +9,8 @@ Read Git status, the current diff, and [RELEASING.md](../../../RELEASING.md) fir
 
 ## Release contract
 
-- Keep `composer.json` versionless. Versions come from annotated `vX.Y.Z` Git tags. Assess behavior and requirements as well as signatures: the live/feature defaults make the current candidate `v2.0.0` major.
-- Preserve existing candidate work, all four migrations, outbox history and official SDK DTO/transport semantics. SDK v1.0.0 needs no separate release.
+- Keep `composer.json` versionless. Versions come from annotated `vX.Y.Z` Git tags. Assess behavior and requirements as well as signatures: removing first-touch attribution and its strategy flag makes `v3.0.0` a major release.
+- Preserve existing candidate work, all five migrations, outbox history and official SDK DTO/transport semantics. PHP SDK v1.1.0 already supplies the resolver; no separate SDK release is needed.
 - Reconcile [README](../../../README.md), [CHANGELOG](../../../CHANGELOG.md), [compatibility](../../../docs/compatibility.md) and the [Boost skill](../../../resources/boost/skills/linkado-development/SKILL.md) with the final public contract.
 - Complete the authorized stage without requesting confirmation again for already authorized steps. Preparation alone does not authorize staging/commit, push, tag, Packagist mutation or deployment. If the next required action lies outside authorization, finish the reviewable preparation and identify the specific pending action.
 - Never rewrite a published tag or force-push a release reference. Correct an already published release with a new version. Stop on unexpected tag/reference conflicts rather than retrying publication blindly.

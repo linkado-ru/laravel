@@ -20,6 +20,7 @@ use Linkado\Laravel\Models\OutboxEvent;
 use Linkado\Laravel\Tests\Support\Attribution\HostIdentityAdapter;
 use Linkado\PhpSdk\DataObjects\CustomerCreatedEventData;
 use Linkado\PhpSdk\LinkadoConnector;
+use Linkado\PhpSdk\Requests\ResolveTrackingClickRequest;
 use Linkado\PhpSdk\Requests\SendEventRequest;
 use Saloon\Http\Faking\MockClient;
 use Saloon\Http\Faking\MockResponse;
@@ -27,6 +28,12 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Process\Process;
 
 beforeEach(function (): void {
+    MockClient::destroyGlobal();
+    MockClient::global([ResolveTrackingClickRequest::class => MockResponse::make(['data' => [
+        'click_id' => '01K5M4W0000000000000000001', 'program_key' => 'public-registration-program',
+        'referral_slug' => 'first-partner', 'visit_order' => 1,
+        'created_at' => '2026-09-21T00:00:00Z', 'expires_at' => '2026-10-21T00:00:00Z',
+    ]])]);
     config()->set('linkado.token', 'synthetic-test-token');
     config()->set('linkado.program_key', 'synthetic-test-program');
     config()->set('linkado.tracking.referral_parameter', 'ref');
@@ -59,6 +66,7 @@ beforeEach(function (): void {
 });
 
 afterEach(function (): void {
+    MockClient::destroyGlobal();
     DB::purge('registration_contract');
     CarbonImmutable::setTestNow();
 });
@@ -90,7 +98,7 @@ function registrationBrowser(): array
     return json_decode($process->getOutput(), true, flags: JSON_THROW_ON_ERROR)[0];
 }
 
-it('preserves the browser first window through registration rollback or commit and a remote outage', function (bool $identity, bool $rollback): void {
+it('freezes the verified browser visit through registration rollback or commit and a remote outage', function (bool $identity, bool $rollback): void {
     if ($identity) {
         app()->instance(LocksLinkadoAttributionIdentity::class, new HostIdentityAdapter($this->connection));
     }
@@ -99,16 +107,14 @@ it('preserves the browser first window through registration rollback or commit a
         'program_key' => 'public-registration-program', 'referral_slug' => 'first-partner',
     ]);
     registrationCapture(registrationRequest($browser['synchronousCookies']));
-    $first = $this->connection->table('linkado_pending_attributions')->sole();
-    expect($first->referral_slug)->toBe('first-partner')
-        ->and($first->captured_at)->toBe('2026-09-21 00:00:00')
-        ->and($first->expires_at)->toBe('2026-10-21 00:00:00');
-
+    expect($this->connection->table('linkado_pending_attributions')->count())->toBe(0);
     CarbonImmutable::setTestNow('2026-09-21 01:00:00');
     registrationCapture(registrationRequest(['lk_referral' => 'later-partner']));
-    expect($this->connection->table('linkado_pending_attributions')->sole())->toEqual($first);
+    expect($this->connection->table('linkado_pending_attributions')->count())->toBe(0);
     $request = registrationRequest($browser['cookies']);
     registrationCapture($request);
+    $first = $this->connection->table('linkado_pending_attributions')->sole();
+    MockClient::global([ResolveTrackingClickRequest::class => MockResponse::make(['message' => 'Unavailable'], 503)]);
     registrationCapture(registrationRequest(['lk_click' => '01ARZ3NDEKTSV4RRFFQ69G5FAW']));
     $upgraded = $this->connection->table('linkado_pending_attributions')->sole();
     expect($upgraded->click_id)->toBe('01K5M4W0000000000000000001')

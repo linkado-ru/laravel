@@ -2,7 +2,13 @@
 
 `linkado-ru/laravel` versions come from Git tags; keep `composer.json` versionless. This procedure separates **preparation**, **publication**, and **post-release verification**. For **v2.0.0**, the live/feature defaults require a major upgrade even though existing public signatures remain compatible. The PHP SDK remains v1.0.0; this release does not require a separate SDK release.
 
-## Current release: v2.1.0
+## Current release: v3.0.0
+
+Verified last-valid visits are the only strategy. Removing first-touch defaults and the strategy flag is a breaking behavior change, so use a new major tag rather than changing published v2.1.0. Preserve all five migrations byte-for-byte and the public facade/identity/event DTO contracts. PHP SDK v1.1.0 already supplies the resolver; no PHP SDK release is required. Run the same exact-commit Ubuntu matrix and fresh dist-consumer gates with version `3.0.0` before publication. Publication, host dependency upgrades and deployment require their own task-specific authorization; run only the stages authorized for the current task.
+
+Health must detect both visit verification columns. Test default behavior without opting in, newer/same-partner visits, invalid/out-of-order sources, rollback/identity races and no verification HTTP in transactions. Shadow recording remains local; new visit capture requires live verification. Never backfill historical proof or rewrite published tags.
+
+## Published release: v2.1.0 (historical)
 
 The v2.0-specific statements below are historical. For v2.1.0, use the same staged procedure with release version `2.1.0` and annotated tag `v2.1.0`. Publish PHP SDK v1.1.0 first: the Laravel package now requires `^1.1`. Keep both manifests versionless. Verify the installed SDK source/dist reference rather than a sibling-source overlay.
 

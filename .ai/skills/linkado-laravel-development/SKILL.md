@@ -9,16 +9,16 @@ description: Develop or review the linkado-ru/laravel package itself, including 
 
 Read Git status and the current diff before editing; preserve unrelated and existing candidate changes. Use public code and its tests, [README](../../../README.md), [compatibility](../../../docs/compatibility.md), and [contribution rules](../../../.github/CONTRIBUTING.md) as the source of truth. Do not infer API fields or endpoints when runtime code is available.
 
-The package owns outbox persistence, delivery, retries, recovery, tracking and SSO infrastructure. Consumers own business producers, adapters, eligibility and their transaction boundaries. The PHP SDK owns DTOs and the transport contract; the v2 Laravel candidate requires no SDK release. Keep host domain models, Hey AI cohort/enrollment/impersonation policy, and Horizon dependencies out of the package.
+The package owns outbox persistence, delivery, retries, recovery, tracking and SSO infrastructure. Consumers own business producers, adapters, eligibility and their transaction boundaries. The PHP SDK owns DTOs and the transport contract; Laravel v3 requires no additional PHP SDK release. Keep host domain models, Hey AI cohort/enrollment/impersonation policy, and Horizon dependencies out of the package.
 
 For application work, read the [package-facing Boost skill](../../../resources/boost/skills/linkado-development/SKILL.md). For version preparation or publication, use `$linkado-laravel-release` and [RELEASING.md](../../../RELEASING.md).
 
-## Preserve v2 behavior
+## Preserve the current contract
 
 - Defaults: `live`; tracking/customer/billing/refund enabled; SSO disabled; `via`; `5184000` seconds (60 days).
 - `LINKADO_URL` is an HTTPS origin. `LINKADO_BASE_URL` retains full API URL semantics, including custom prefixes. Origin wins; validate both even when legacy loses precedence. Compute API/script/click endpoints locally. Invalid nonempty settings never fall back to production; tracking CDN/proxy overrides do not change API or SSO authority.
 - `Linkado::enabled(LinkadoFeature): bool` checks package mode, feature and configuration without host eligibility, DB or HTTP. Package readiness precedes host policy and lazy SSO adapters. Missing live token/program stops new integration operations without constructing the connector or sending HTTP.
-- Shadow requires a program key, captures locally and records terminal snapshots, but renders no hosted script and sends no outbox or SSO HTTP. Off stops new capture/recording; it does not remove the consume-before-claim obligation.
+- Shadow requires a program key and records terminal snapshots, but does not verify/capture new visits, render the hosted script or send outbox/SSO HTTP. Verified last-valid visits are the only capture strategy; no opt-in setting remains. Off stops new capture/recording; it does not remove the consume-before-claim obligation.
 - Missing live configuration leaves pending delivery unclaimed, with its snapshot and attempt count intact for recovery. Mode changes and retry/recovery retain their existing tested behavior.
 
 ## Preserve transactional compatibility
@@ -26,7 +26,7 @@ For application work, read the [package-facing Boost skill](../../../resources/b
 - Build official SDK DTOs with the factory-provided event ID. Preserve source keys, exact payload bytes and SHA-256 hash across duplicates, retries and recovery; never reconstruct an event from current host state for delivery.
 - Host facts, attribution consumption and outbox recording use the configured package connection and an active host transaction. Dispatch occurs only after the outer commit; rollback restores consumption and suppresses dispatch.
 - Registration consumes before claiming identity even without cookies/pending attribution, in off mode or with customer recording disabled. The optional adapter freshly locks the host identity before the pending row, on the same connection; unresolved/closed identities never fall back to visitor-only behavior.
-- Preserve public facade/contract/value-object signatures and all four migration filenames, definitions and existing history. Do not add a migration merely for the v2 defaults change or backfill guessed identity associations.
+- Preserve public facade/contract/value-object signatures and all five migration filenames, definitions and existing history. Do not add a migration merely for the verified-visit strategy cleanup or backfill guessed identity associations.
 - Keep the two explicitly approved `@phpstan-ignore return.unusedType` annotations on nullable tracking URL getters. Do not widen suppressions or change those public nullable signatures.
 - Diagnostics exclude credentials, raw cookies, DTO payloads, PII and one-time SSO URLs. Consumer observability remains consumer-owned.
 

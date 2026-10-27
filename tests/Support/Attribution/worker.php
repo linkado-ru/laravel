@@ -14,14 +14,20 @@ use Linkado\Laravel\Actions\CapturePendingAttribution;
 use Linkado\Laravel\Actions\ConsumePendingAttribution;
 use Linkado\Laravel\Contracts\DeterminesLinkadoEligibility;
 use Linkado\Laravel\Contracts\LocksLinkadoAttributionIdentity;
+use Linkado\Laravel\Enums\LinkadoFeature;
 use Linkado\Laravel\Events\AttributionConsumed;
 use Linkado\Laravel\Support\Attribution\IdentityLock;
 use Linkado\Laravel\Support\Attribution\PreparedAttribution;
 use Linkado\Laravel\Support\Database\RequiresActiveTransaction;
+use Linkado\Laravel\Support\EligibilityContext;
 use Linkado\Laravel\Support\LinkadoConfiguration;
 use Linkado\Laravel\Support\Tracking\TrackingGate;
 use Linkado\Laravel\Tests\Support\Attribution\HostIdentityAdapter;
 use Linkado\Laravel\Tests\Support\DatabaseConfiguration;
+use Linkado\PhpSdk\Requests\ResolveTrackingClickRequest;
+use Saloon\Config;
+use Saloon\Http\Faking\MockClient;
+use Saloon\Http\Faking\MockResponse;
 
 require __DIR__.'/../../../vendor/autoload.php';
 
@@ -65,11 +71,19 @@ try {
     send(['stage' => 'ready', 'session' => (int) $sessionId]);
     CarbonImmutable::setTestNow($options['now'] ?? '2026-09-21 10:00:00');
     $configuration = new LinkadoConfiguration(new Repository(['linkado' => [
-        'connection' => 'default',
-        'tracking' => ['ttl_seconds' => 120, 'visitor_cookie' => 'linkado_visitor', 'click_cookie' => 'lk_click', 'referral_cookie' => 'lk_referral'],
+        'connection' => 'default', 'mode' => 'live', 'token' => 'synthetic-test-token',
+        'program_key' => 'synthetic-test-program', 'features' => ['tracking' => true],
+        'tracking' => ['referral_parameter' => 'via', 'ttl_seconds' => 120, 'visitor_cookie' => 'linkado_visitor', 'click_cookie' => 'lk_click', 'referral_cookie' => 'lk_referral'],
     ]]));
     $transaction = new RequiresActiveTransaction($capsule->getDatabaseManager(), $configuration);
     $identityLock = new IdentityLock($container, $transaction);
+    $container->instance(DeterminesLinkadoEligibility::class, new class implements DeterminesLinkadoEligibility
+    {
+        public function allows(LinkadoFeature $feature, EligibilityContext $context): bool
+        {
+            return true;
+        }
+    });
     $preparedAttribution = new PreparedAttribution(
         $capsule->getDatabaseManager(),
         $configuration,
@@ -117,16 +131,29 @@ try {
         }
     }
 
+    Config::preventStrayRequests();
+    MockClient::global([ResolveTrackingClickRequest::class => MockResponse::make(['data' => [
+        'click_id' => $options['click'] ?? '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        'program_key' => 'synthetic-test-program', 'referral_slug' => 'partner',
+        'visit_order' => $options['order'] ?? 1,
+        'created_at' => '2026-09-21T10:00:00Z', 'expires_at' => '2026-09-21T10:02:00Z',
+    ]])]);
+
+    if ($options['atomic'] ?? false) {
+        $request->cookies->set('lk_attribution', json_encode([
+            'version' => 1, 'program_key' => 'synthetic-test-program',
+            'click_id' => $options['click'], 'referral_slug' => 'partner',
+        ], JSON_THROW_ON_ERROR));
+    }
+
     if ($options['operation'] === 'capture') {
+        $preparedAttribution->prepare($request);
+
         if ($options['outer'] ?? false) {
             $connection->beginTransaction();
         }
 
-        if ($options['identity_binding'] ?? false) {
-            $capture->handleRequest($request, $options['visitor'], $options['click'] ?? null, $options['slug'] ?? null);
-        } else {
-            $capture->handle($options['visitor'], $options['click'] ?? null, $options['slug'] ?? null);
-        }
+        $capture->handle($request, $options['visitor']);
 
         if ($options['outer'] ?? false) {
             $connection->table('linkado_pending_attributions')->count();

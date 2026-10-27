@@ -19,7 +19,7 @@ beforeEach(function (): void {
     MockClient::destroyGlobal();
     config()->set([
         'linkado.mode' => 'live', 'linkado.token' => 'synthetic-token', 'linkado.program_key' => 'test-program',
-        'linkado.features.tracking' => true, 'linkado.tracking.last_valid_visit' => true,
+        'linkado.features.tracking' => true,
         'database.connections.last_visit' => DatabaseConfiguration::externalOrSqlite(), 'linkado.connection' => 'last_visit',
     ]);
     DB::purge('last_visit');
@@ -315,23 +315,56 @@ it('does not consume a verified row after the configured program changes', funct
     $mock->assertSentCount(1);
 });
 
-it('does not inherit verification when a legacy capture replaces an expired verified visit', function (): void {
+it('rejects an unverified stored click even when the browser repeats it', function (): void {
     // Arrange
-    $mock = MockClient::global([ResolveTrackingClickRequest::class => MockResponse::make(['data' => lastVisitFacts()])]);
-    captureLastVisit(lastVisitRequest());
-    $this->travelTo('2026-12-18 10:00:00');
-    config()->set(['linkado.tracking.last_valid_visit' => false, 'linkado.tracking.ttl_seconds' => 3600]);
-    $forgedClick = '01ARZ3NDEKTSV4RRFFQ69G5FAW';
-    app(Linkado\Laravel\Actions\CapturePendingAttribution::class)
-        ->handle('01ARZ3NDEKTSV4RRFFQ69G5FAX', $forgedClick, null);
-    config()->set('linkado.tracking.last_valid_visit', true);
+    $this->connection->table('linkado_pending_attributions')->insert([
+        'visitor_hash' => hash('sha256', '01ARZ3NDEKTSV4RRFFQ69G5FAX'),
+        'click_id' => '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        'captured_at' => now(), 'expires_at' => now()->addDay(),
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $mock = MockClient::global([]);
 
     // Act
-    $snapshot = $this->connection->transaction(fn () => app(AttributionManager::class)->consume(lastVisitRequest($forgedClick)));
+    $snapshot = $this->connection->transaction(fn () => app(AttributionManager::class)->consume(lastVisitRequest()));
 
     // Assert
     expect($snapshot)->toBeNull();
     $row = $this->connection->table('linkado_pending_attributions')->sole();
-    expect($row->visit_order)->toBeNull()->and($row->program_key)->toBeNull();
-    $mock->assertSentCount(1);
+    expect($row->visit_order)->toBeNull()->and($row->program_key)->toBeNull()
+        ->and($row->click_id)->toBeNull()->and($row->consumed_at)->not->toBeNull();
+    $mock->assertNothingSent();
 });
+
+it('does not capture a live prepared visit after switching out of live mode', function (string $mode): void {
+    // Arrange
+    $mock = MockClient::global([ResolveTrackingClickRequest::class => MockResponse::make(['data' => lastVisitFacts()])]);
+    $request = lastVisitRequest();
+    app(AttributionManager::class)->prepare($request);
+    config()->set('linkado.mode', $mode);
+
+    // Act
+    captureLastVisit($request);
+    $snapshot = $this->connection->transaction(fn () => app(AttributionManager::class)->consume($request));
+
+    // Assert
+    expect($snapshot)->toBeNull()
+        ->and($this->connection->table('linkado_pending_attributions')->count())->toBe(0);
+    $mock->assertSentCount(1);
+})->with(['shadow', 'off']);
+
+it('still consumes an already captured verified visit after leaving live mode', function (string $mode): void {
+    // Arrange
+    $mock = MockClient::global([ResolveTrackingClickRequest::class => MockResponse::make(['data' => lastVisitFacts()])]);
+    $request = lastVisitRequest();
+    captureLastVisit($request);
+    config()->set('linkado.mode', $mode);
+
+    // Act
+    $snapshot = $this->connection->transaction(fn () => app(AttributionManager::class)->consume($request));
+
+    // Assert
+    expect($snapshot?->clickId)->toBe('01ARZ3NDEKTSV4RRFFQ69G5FAV')
+        ->and($this->connection->table('linkado_pending_attributions')->sole()->consumed_at)->not->toBeNull();
+    $mock->assertSentCount(1);
+})->with(['shadow', 'off']);

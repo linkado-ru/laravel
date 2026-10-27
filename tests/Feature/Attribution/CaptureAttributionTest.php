@@ -11,9 +11,13 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Linkado\Laravel\Http\Middleware\CapturePendingAttribution;
+use Linkado\Laravel\Tests\Support\Attribution\VerifiedVisit;
+use Saloon\Http\Faking\MockClient;
 use Symfony\Component\HttpFoundation\Response;
 
 beforeEach(function (): void {
+    MockClient::destroyGlobal();
+    VerifiedVisit::fake();
     config()->set('linkado.token', 'synthetic-test-token');
     config()->set('linkado.program_key', 'synthetic-test-program');
     config()->set('linkado.tracking.referral_parameter', 'ref');
@@ -42,6 +46,8 @@ beforeEach(function (): void {
     p11AttributionMigration()->up();
     (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
 
+    (require __DIR__.'/../../../database/migrations/2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php')->up();
+
     Route::middleware(['web', 'linkado.attribution'])
         ->get('/_linkado-tests/attribution', fn () => response('ok'));
     Route::middleware('linkado.attribution')
@@ -49,6 +55,7 @@ beforeEach(function (): void {
 });
 
 afterEach(function (): void {
+    MockClient::destroyGlobal();
     CarbonImmutable::setTestNow();
 
     if (Schema::connection('linkado_test')->hasTable('linkado_pending_attributions')) {
@@ -89,10 +96,9 @@ it('captures a click against only the hashed visitor on the configured connectio
         ->and(Schema::connection('host_test')->hasTable('linkado_pending_attributions'))->toBeFalse();
 });
 
-it('captures referral slugs from cookies and the configured query parameter', function (
+it('waits for a verified click instead of capturing slug-only cookies or queries', function (
     ?string $cookieReferral,
     string $query,
-    string $expected,
 ): void {
     config()->set('linkado.tracking.referral_parameter', 'partner');
     $visitorId = strtolower((string) Str::ulid());
@@ -105,10 +111,10 @@ it('captures referral slugs from cookies and the configured query parameter', fu
     $request->get('/_linkado-tests/attribution'.$query)->assertOk();
 
     expect(p11AttributionRow()?->click_id)->toBeNull()
-        ->and(p11AttributionRow()?->referral_slug)->toBe($expected);
+        ->and(p11AttributionCount())->toBe(0);
 })->with([
-    'referral cookie' => ['cookie-partner', '', 'cookie-partner'],
-    'custom query parameter' => [null, '?partner=query-partner', 'query-partner'],
+    'referral cookie' => ['cookie-partner', ''],
+    'custom query parameter' => [null, '?partner=query-partner'],
 ]);
 
 it('prefers a click over referral slugs from either source', function (): void {
@@ -124,7 +130,7 @@ it('prefers a click over referral slugs from either source', function (): void {
         ->and(p11AttributionRow()?->referral_slug)->toBeNull();
 });
 
-it('upgrades an existing referral slug to a click', function (): void {
+it('captures a verified click after an earlier unconfirmed slug', function (): void {
     $visitorId = strtolower((string) Str::ulid());
 
     $this->withCookie('linkado_visitor', $visitorId)
@@ -172,15 +178,14 @@ it('starts a new window after expiry without retaining the old click', function 
     CarbonImmutable::setTestNow('2026-09-21 11:00:00');
 
     $this->withCookie('linkado_visitor', $visitorId)
-        ->withUnencryptedCookie('lk_click', '')
-        ->withUnencryptedCookie('lk_referral', 'new-partner')
+        ->withUnencryptedCookie('lk_click', '01ARZ3NDEKTSV4RRFFQ69G5FAW')
         ->get('/_linkado-tests/attribution')
         ->assertOk();
 
     $row = p11AttributionRow();
 
-    expect($row?->click_id)->toBeNull()
-        ->and($row?->referral_slug)->toBe('new-partner')
+    expect($row?->click_id)->toBe('01ARZ3NDEKTSV4RRFFQ69G5FAW')
+        ->and($row?->referral_slug)->toBeNull()
         ->and(CarbonImmutable::parse((string) $row?->captured_at)->equalTo(now()))->toBeTrue()
         ->and(CarbonImmutable::parse((string) $row?->expires_at)->equalTo(now()->addSeconds(120)))->toBeTrue();
 });
@@ -225,7 +230,7 @@ it('rejects oversized identifiers instead of truncating them', function (string 
     'Unicode referral slug' => ['lk_referral', str_repeat('ж', 300)],
 ]);
 
-it('selects referral cookies before query without falling back from malformed cookies', function (mixed $cookie, mixed $query, ?string $expected): void {
+it('never treats a slug-only cookie or query as a verified visit', function (mixed $cookie, mixed $query): void {
     $request = Request::create('/landing', cookies: [
         'linkado_visitor' => (string) Str::ulid(), 'lk_referral' => $cookie,
     ]);
@@ -236,19 +241,19 @@ it('selects referral cookies before query without falling back from malformed co
 
         return response('ok');
     });
-    expect($calls)->toBe(1)->and(p11AttributionCount())->toBe($expected === null ? 0 : 1)
-        ->and(p11AttributionRow()?->referral_slug)->toBe($expected);
+    expect($calls)->toBe(1)->and(p11AttributionCount())->toBe(0)
+        ->and(p11AttributionCount())->toBe(0);
 })->with([
-    'cookie precedes query' => ['first', 'second', 'first'],
-    'null cookie absent' => [null, 'second', 'second'],
-    'empty cookie absent' => ['', 'second', 'second'],
-    'both absent' => [null, '', null],
-    'malformed cookie blocks fallback' => ['INVALID', 'second', null],
-    'whitespace cookie blocks fallback' => [' ', 'second', null],
-    'array cookie blocks fallback' => [['first'], 'second', null],
-    'padded query rejected' => [null, ' second ', null],
-    'array query rejected' => [null, ['second'], null],
-    'nonselected query ignored' => ['first', ['second'], 'first'],
+    'cookie precedes query' => ['first', 'second'],
+    'null cookie absent' => [null, 'second'],
+    'empty cookie absent' => ['', 'second'],
+    'both absent' => [null, ''],
+    'malformed cookie blocks fallback' => ['INVALID', 'second'],
+    'whitespace cookie blocks fallback' => [' ', 'second'],
+    'array cookie blocks fallback' => [['first'], 'second'],
+    'padded query rejected' => [null, ' second '],
+    'array query rejected' => [null, ['second']],
+    'nonselected query ignored' => ['first', ['second']],
 ]);
 
 it('rejects padded query identifiers through the full HTTP middleware stack', function (string $query): void {
@@ -279,12 +284,11 @@ it('rejects a partial raw query parse while leaving selected cookies and host er
     } finally {
         restore_error_handler();
     }
-    expect(p11AttributionCount())->toBe($cookieWins ? 1 : 0)
-        ->and(p11AttributionRow()?->referral_slug)->toBe($cookieWins ? 'cookie-partner' : null)
+    expect(p11AttributionCount())->toBe(0)
         ->and($warnings)->toBe(['host-handler-still-active']);
 })->with([false, true]);
 
-it('rejects raw referral arrays with either PHP nesting-warning behavior', function (int $depth, bool $cookieWins, bool $unrelated, string $separator, bool $displayErrors): void {
+it('keeps verified clicks independent of raw query arrays and parser settings', function (int $depth, bool $cookieWins, bool $unrelated, string $separator, bool $displayErrors): void {
     config()->set('linkado.tracking.referral_parameter', 'custom_ref');
     $request = Request::create('/landing', cookies: [
         'linkado_visitor' => (string) Str::ulid(),
@@ -300,10 +304,7 @@ it('rejects raw referral arrays with either PHP nesting-warning behavior', funct
     } finally {
         ini_set('display_errors', $previousDisplayErrors);
     }
-    // PHP emits nesting warnings only with display_errors disabled. Any parser
-    // warning rejects the query; a selected cookie still avoids query parsing.
-    $queryWarning = ! $displayErrors && $depth > (int) ini_get('max_input_nesting_level');
-    expect(p11AttributionCount())->toBe($cookieWins || ($unrelated && ! $queryWarning) ? 1 : 0);
+    expect(p11AttributionCount())->toBe(1);
 })->with([1, (int) ini_get('max_input_nesting_level') + 1])->with([false, true])->with([false, true])
     ->with(fn (): array => str_split((string) ini_get('arg_separator.input')))->with([false, true]);
 
@@ -313,7 +314,7 @@ it('honors the exact configured query separators without treating value text as 
     ]);
     $request->server->set('QUERY_STRING', 'other=x&ref[a]=value');
     app(CapturePendingAttribution::class)->handle($request, fn (): Response => response('ok'));
-    expect(p11AttributionCount())->toBe(str_contains((string) ini_get('arg_separator.input'), '&') ? 0 : 1);
+    expect(p11AttributionCount())->toBe(1);
 });
 
 function p11AttributionMigration(): Migration

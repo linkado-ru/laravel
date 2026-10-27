@@ -46,7 +46,7 @@ For local delivery, add `LINKADO_URL=https://linkado.test`. Known URLs are resol
 
 Origins require HTTPS and a host, allow a port and trailing root slash, and forbid API paths, query, fragment, user-info and unsafe characters. Advanced script/endpoint overrides affect only their corresponding URL, support CDN/proxy hosts and query strings, and permit HTTP only in local/testing. API and SSO always require HTTPS. SSO redirects must match the selected API host and effective port; CDN/proxy overrides grant no SSO permission.
 
-Local shadow needs only `LINKADO_MODE=shadow` and a public program key (optionally `LINKADO_URL`). It retains local capture and immutable snapshots, but loads no hosted script and makes no SSO or outbox HTTP request. `LINKADO_MODE=off` stops new capture and recording. Consume-before-claim still applies in every mode. SSO requires an explicit `LINKADO_SSO_ENABLED=true` and a host user resolver.
+Local shadow needs only `LINKADO_MODE=shadow` and a public program key (optionally `LINKADO_URL`). It records local immutable event snapshots, but does not verify or capture new visits, load the hosted script, or make SSO/outbox HTTP requests. `LINKADO_MODE=off` stops new capture and recording. Consume-before-claim still applies in every mode. SSO requires an explicit `LINKADO_SSO_ENABLED=true` and a host user resolver.
 
 Never commit credentials. A default URL does not prove DNS/TLS, public assets, merchant CORS, workers, program rules or remote scopes are ready.
 
@@ -72,7 +72,7 @@ Every package configuration key is listed below. Values without an environment v
 | `linkado.tracking.visitor_cookie` | `linkado_visitor` | Encrypted package visitor cookie name. |
 | `linkado.tracking.click_cookie` | `lk_click` | Hosted script click-cookie name. |
 | `linkado.tracking.referral_cookie` | `lk_referral` | Hosted script referral-cookie name. |
-| `linkado.tracking.ttl_seconds` | `LINKADO_ATTRIBUTION_TTL_SECONDS=5184000` | Pending attribution lifetime in seconds. |
+| `linkado.tracking.ttl_seconds` | `LINKADO_ATTRIBUTION_TTL_SECONDS=5184000` | Requested browser attribution window in seconds; pending expiry comes from the authenticated resolver. |
 | `linkado.sso.route` | `linkado.sso.launch` | Name of the package's SSO POST route. |
 | `linkado.sso.middleware` | `web`, `auth`, `throttle:6,1` | Middleware protecting SSO launches. |
 | `linkado.sso.error_redirect` | `/` | Local path after an SSO failure; unsafe values fall back to `/`. |
@@ -137,19 +137,15 @@ Route::middleware(['web', 'linkado.attribution'])->group(function (): void {
 });
 ```
 
-The package manages its encrypted visitor cookie on the `web` middleware group. Capture gives click IDs precedence over referral slugs and stores only a SHA-256 visitor hash in the database. With the default `linkado.tracking.last_valid_visit=false`, the first active touch fixes the attribution window: later captures do not replace it or extend its TTL. A referral slug may upgrade to a click, retaining the original capture and expiry times. At expiry (including the exact boundary), a new touch starts a new window.
+The package manages its encrypted visitor cookie on the `web` middleware group and stores only its SHA-256 hash. Attribution always uses the last server-verified visit before registration. Each newer confirmed click, including another visit from the same partner, replaces the unconsumed candidate and uses that click's server expiry. Reading the same cookie again never extends its window. Ordinary page views, invalid links and slug-only values do not establish or refresh attribution.
 
-Click IDs must pass Laravel's `Str::isUlid`; referral slugs must contain 1–100 lowercase ASCII letters or digits, optionally separated by single hyphens. Identifiers are never trimmed, truncated, or case-normalized. Null and empty strings mean absent; malformed source candidates reject capture or consumption without falling back to another source. For referral capture, an existing referral cookie takes precedence over the configured query parameter.
+### Verified visits
 
-Consumption requires the visitor cookie and an exact matching source cookie: a click row requires the same click, and a referral row requires the same referral with no click candidate. Query parameters cannot confirm consumption, and consumption never upgrades a referral to a click. A stored row must contain exactly one valid source. Matching establishes consistency with the captured browser cookies; it does not verify that the click exists in Linkado.
+Install PHP SDK `^1.1`, deploy the authenticated Linkado resolver, and apply all five published migrations, including `2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php`. No strategy flag or environment variable is required. Existing rows are not remotely verified or backfilled by migration. Unverified rows cannot be consumed merely because their cookies match.
 
-### Verified last-valid visits (v2.1)
+The atomic `lk_attribution` v1 cookie takes precedence over `lk_click`/`lk_referral`; malformed or foreign-program snapshots never fall back to the pair or a query slug. Legacy click cookies can be verified when the atomic cookie is absent. Slug-only/query captures are unavailable: wait for the hosted script's confirmed click. Browser sequence, expiry and IDs are untrusted. The package resolves click/program/slug/order/creation/expiry via authenticated `POST tracking/clicks/resolve` using the integration's existing `events:write` ability. No raw cookie or fingerprint is sent.
 
-Set `linkado.tracking.last_valid_visit=true` only after installing PHP SDK `^1.1` and Laravel package `^2.1`, deploying the authenticated Linkado resolver, publishing/applying the additive `2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php` migration, and verifying the consumer. The original four migrations and all historical outbox/identity data remain unchanged. Existing rows are not remotely verified or backfilled by migration. The default remains the legacy strategy described above.
-
-The atomic `lk_attribution` v1 cookie takes precedence over `lk_click`/`lk_referral`; malformed or foreign-program snapshots never fall back to the pair or a query slug. Legacy click cookies can be verified when the atomic cookie is absent. Slug-only/query captures are unavailable in this mode: wait for the hosted script's confirmed click. Browser sequence, expiry and IDs are untrusted. The package resolves click/program/slug/order/creation/expiry via authenticated `POST tracking/clicks/resolve` using the integration's existing `events:write` ability. No raw cookie or fingerprint is sent.
-
-The verified click identifies its original participation even if the partner renamed the slug after the visit. A syntactically valid browser slug need not equal the current resolved slug. Legacy captures that replace a candidate clear its verification metadata; switching the opt-in flag back on cannot authenticate a different click using an old visit's proof.
+The verified click identifies its original participation even if the partner renamed the slug after the visit. A syntactically valid browser slug need not equal the current resolved slug. Unverified stored clicks cannot inherit another visit's verification metadata.
 
 Call `Linkado::attribution()->prepare($request)` **before** the host registration transaction, after resolving eligibility/anonymous identity. The capture middleware prepares outside its own transaction. Verification uses one request with a one-second connection/two-second total timeout, without retry. Shadow/off/denied tracking does not verify. An outage or invalid response preserves pending state and normal signup; a matching previously verified click may still be consumed before expiry. Verification is request-local, bound to unchanged source cookies/program, and is never performed inside an active package connection transaction.
 
@@ -166,6 +162,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Linkado\Laravel\Facades\Linkado;
 use Linkado\PhpSdk\DataObjects\CustomerCreatedEventData;
+
+Linkado::attribution()->prepare($request);
 
 DB::connection(config('linkado.connection'))->transaction(
     function () use ($request, $customer): void {
@@ -276,7 +274,7 @@ The table and lifecycle belong to the application; the package does not create t
 
 During registration, call `Linkado::attribution()->consume($request)` **before claiming the host identity**, inside the registration transaction on that connection. Call consume even when visitor/source cookies or pending attribution are absent and when customer events are disabled. The identity lock remains held until the host transaction ends. All competing host claim paths must follow this protocol. Lock order is host identity first, pending attribution second. A successful claim prevents later captures even after expiry, pruning, or visitor rotation; a rolled-back claim and consumption restore the previous state. No Linkado HTTP request is made on this path.
 
-Identity bindings are checked for each operation. An unresolved or closed identity yields no capture or snapshot; it never falls back to visitor-only mode. The requestless `CapturePendingAttribution::handle()` refuses writes while an adapter is bound. Active rows cannot change identity. Identity mismatches return no attribution without scrubbing or otherwise modifying the row, even when source cookies mismatch. Legacy rows with `identity_hash = null` cannot be adopted by an adapter, and bound rows cannot be consumed after removing it. Once an old window expires, capture may create a new window under the current identity/lifecycle rules; existing visitors are never merged across devices.
+Identity bindings are checked for each operation. An unresolved or closed identity yields no capture or snapshot; it never falls back to visitor-only mode. Capture requires a request and verified server facts. Active rows cannot change identity. Identity mismatches return no attribution without scrubbing or otherwise modifying the row, even when source cookies mismatch. Legacy rows with `identity_hash = null` cannot be adopted by an adapter, and bound rows cannot be consumed after removing it. Pruning an expired window does not reopen a claimed host identity; existing visitors are never merged across devices.
 
 For upgrade, pause attribution capture and related registration transitions, publish migrations and apply `2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php`, check `linkado:health`, then enable the adapter and resume. The three published create migrations remain unchanged. Do not backfill identity associations from guesses. For rollback, disable the affected integration first; removing an adapter or reverting package code does not preserve lifecycle guarantees, and the migration must not be dropped automatically.
 
@@ -391,7 +389,9 @@ Review retention requirements for the host application and keep the daily attrib
 
 The package follows Semantic Versioning. Within a major version, additive configuration and migration changes may require publishing new resources; breaking public API or default behavior changes require a new major version.
 
-Version `v2.1.0` adds opt-in verified visits and a fifth, forward-only migration while requiring PHP SDK `^1.1`. Publish/apply that migration on every package connection when upgrading to v2.1, preserve the original four, and keep `tracking.last_valid_visit=false` until the matching server endpoint and host acceptance are ready.
+Version `v3.0.0` makes verified visits the only strategy. It removes `tracking.last_valid_visit`, unverified slug/query capture, first-touch replacement rules and requestless internal capture. Applications must prepare attribution before their registration transaction and retain consume-before-identity-claim plus immutable customer outbox recording inside it. The facade, identity contract and event DTOs remain unchanged. Preserve all five migrations and existing history. No PHP SDK release or new schema migration is required when upgrading from v2.1.
+
+Published v2.1.0 remains unchanged: consumers staying on that version select verified visits with its existing configuration key. V3 is an explicit major upgrade: install `linkado-ru/laravel:^3.0` from the published release and remove the obsolete strategy key. Verify the installed source/dist reference; source checkouts alone do not prove Packagist delivery. See [compatibility](docs/compatibility.md) and [release procedure](RELEASING.md).
 
 Version `v2.0.0` was a major release: live defaults and enabled event families require an explicit major upgrade from `^1.x`. The supported facade/contract/getter signatures remain compatible and identity locking is opt-in. See the [explicit API and schema diff](docs/compatibility.md) and the v1-to-v2 migration below.
 

@@ -32,7 +32,7 @@ final class PreparedAttribution
 
     public function prepare(Request $request): ?TrackingClickData
     {
-        if (! $this->configuration->lastValidVisit() || ! $this->tracking->allows($request)) {
+        if (! $this->tracking->allows($request) || $this->configuration->mode() !== DeliveryMode::Live) {
             return null;
         }
         $fingerprint = $this->fingerprint($request);
@@ -48,7 +48,7 @@ final class PreparedAttribution
         $this->prepared[$request] = ['fingerprint' => $fingerprint, 'click' => null];
         $candidate = $this->candidate($request);
 
-        if ($candidate === null || $this->configuration->mode() !== DeliveryMode::Live) {
+        if ($candidate === null) {
             return null;
         }
 

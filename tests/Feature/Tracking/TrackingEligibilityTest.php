@@ -17,7 +17,9 @@ use Linkado\Laravel\Http\Middleware\CapturePendingAttribution;
 use Linkado\Laravel\Http\Middleware\EnsureLinkadoVisitor;
 use Linkado\Laravel\Support\EligibilityContext;
 use Linkado\Laravel\Support\Tracking\TrackingRenderer;
+use Linkado\Laravel\Tests\Support\Attribution\VerifiedVisit;
 use Linkado\PhpSdk\LinkadoConnector;
+use Saloon\Http\Faking\MockClient;
 use Symfony\Component\HttpFoundation\Response;
 
 beforeEach(function (): void {
@@ -38,12 +40,15 @@ beforeEach(function (): void {
     (require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php')->up();
     (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
 
+    (require __DIR__.'/../../../database/migrations/2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php')->up();
+
     Route::middleware(['web', 'linkado.attribution'])->get('/_tracking-policy', fn () => response(
         'host-content'.Blade::render('@linkadoTracking', deleteCachedView: true),
     ));
 });
 
 afterEach(function (): void {
+    MockClient::destroyGlobal();
     DB::purge('tracking_policy');
 });
 
@@ -126,6 +131,7 @@ it('fails closed across the HTTP tracking path without resolving SDK or emitting
 })->with(['denied', 'exception', 'error', 'construction', 'off', 'disabled', 'mode', 'feature', 'ttl']);
 
 it('passes fresh request user and no event to each tracking surface', function (string $surface): void {
+    $mock = VerifiedVisit::fake('public-program');
     $seen = [];
     trackingPolicy(function (LinkadoFeature $feature, EligibilityContext $context) use (&$seen): bool {
         $seen[] = [$feature, $context->request, $context->user, $context->event];
@@ -146,6 +152,7 @@ it('passes fresh request user and no event to each tracking surface', function (
 
         if ($surface === 'capture') {
             $request->cookies->set('linkado_visitor', (string) Str::ulid());
+            $request->cookies->set('lk_click', '01ARZ3NDEKTSV4RRFFQ69G5FAV');
         }
         app()->instance('request', $request);
         $request->setUserResolver(fn () => $user);
@@ -164,9 +171,14 @@ it('passes fresh request user and no event to each tracking surface', function (
                 expect(DB::connection('tracking_policy')->table('linkado_pending_attributions')->count())->toBe(1);
             }
         }
-        expect($seen[$index] ?? null)->toBe([LinkadoFeature::Tracking, $request, $user, null]);
+        $current = array_filter($seen, fn (array $context): bool => $context[1] === $request);
+        expect($current)->not->toBeEmpty();
+        foreach ($current as $context) {
+            expect($context)->toBe([LinkadoFeature::Tracking, $request, $user, null]);
+        }
     }
-    expect($seen)->toHaveCount(4);
+    expect(array_unique(array_map(fn (array $context): int => spl_object_id($context[1]), $seen)))->toHaveCount(4);
+    $mock->assertSentCount($surface === 'capture' ? 1 : 0);
 })->with(['capture', 'visitor', 'renderer']);
 
 it('propagates downstream exceptions exactly once outside tracking failure handling', function (string $middleware, bool $deny): void {
@@ -210,8 +222,9 @@ it('boots default bindings and disables live tracking without credentials', func
 });
 
 it('keeps storage failures visible instead of treating them as optional tracking setup', function (): void {
+    $mock = VerifiedVisit::fake('public-program');
     DB::connection('tracking_policy')->getSchemaBuilder()->drop('linkado_pending_attributions');
-    $request = Request::create('/?ref=partner', cookies: ['linkado_visitor' => (string) Str::ulid()]);
+    $request = VerifiedVisit::request((string) Str::ulid());
     $calls = 0;
     expect(fn () => app(CapturePendingAttribution::class)->handle($request, function () use (&$calls): Response {
         $calls++;
@@ -219,6 +232,7 @@ it('keeps storage failures visible instead of treating them as optional tracking
         return new Response('host-content');
     }))->toThrow(QueryException::class);
     expect($calls)->toBe(0);
+    $mock->assertSentCount(1);
 });
 
 it('does not issue or inject a visitor when cookie configuration is unusable', function (mixed $name): void {

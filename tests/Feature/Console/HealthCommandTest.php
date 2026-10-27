@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Linkado\Laravel\Enums\DeliveryMode;
@@ -253,6 +254,7 @@ function p18Migrate(): void
     p18AttemptMigration()->up();
     p18AttributionMigration()->up();
     (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
+    (require __DIR__.'/../../../database/migrations/2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php')->up();
 }
 
 function p18EventMigration(): Migration
@@ -292,3 +294,23 @@ it('fails health for the missing additive identity migration and recovers after 
     $this->artisan('linkado:health', ['--json' => true])
         ->expectsOutput(p18Report(p18HealthyChecks(), 'healthy'))->assertSuccessful();
 });
+
+it('fails health when verified attribution columns are missing', function (string $column): void {
+    // Arrange
+    p18Migrate();
+    Schema::connection('linkado_health_test')->table('linkado_pending_attributions', function (Blueprint $table) use ($column): void {
+        $table->dropColumn($column);
+    });
+
+    // Act & Assert
+    $this->artisan('linkado:health', ['--json' => true])
+        ->expectsOutput(p18Report([
+            p18Check('configuration', 'healthy'),
+            p18Check('database', 'healthy'),
+            p18Check('migrations', 'failure', 1),
+            p18Check('pending_lag', 'not_applicable'),
+            p18Check('stale_claims', 'not_applicable'),
+            p18Check('permanent_failures', 'not_applicable'),
+        ], 'failure'))
+        ->assertExitCode(2);
+})->with(['visit_order', 'program_key']);

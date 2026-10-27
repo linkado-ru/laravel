@@ -33,6 +33,7 @@ beforeEach(function (): void {
 
     p12ConsumeMigration()->up();
     (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
+    (require __DIR__.'/../../../database/migrations/2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php')->up();
 });
 
 afterEach(function (): void {
@@ -46,7 +47,7 @@ afterEach(function (): void {
     DB::purge('linkado_test');
 });
 
-it('consumes valid click and referral attribution inside the configured transaction', function (
+it('consumes a verified click inside the configured transaction', function (
     ?string $clickId,
     ?string $referralSlug,
 ): void {
@@ -66,7 +67,6 @@ it('consumes valid click and referral attribution inside the configured transact
         ->and(DB::connection('linkado_test')->table('linkado_pending_attributions')->sole()->consumed_at)->not->toBeNull();
 })->with([
     'click' => ['01ARZ3NDEKTSV4RRFFQ69G5FAV', null],
-    'referral slug' => [null, 'partner'],
 ]);
 
 it('returns null for a missing visitor cookie without deleting another visitor attribution', function (): void {
@@ -127,11 +127,11 @@ it('restores consumed attribution when the caller rolls back', function (): void
 
 it('cannot consume the same attribution twice', function (): void {
     $visitorId = strtolower((string) Str::ulid());
-    p12InsertAttribution($visitorId, null, 'partner');
+    p12InsertAttribution($visitorId, '01ARZ3NDEKTSV4RRFFQ69G5FAV', null);
 
     $results = DB::connection('linkado_test')->transaction(fn (): array => [
-        Linkado::attribution()->consume(p12Request($visitorId, null, 'partner')),
-        Linkado::attribution()->consume(p12Request($visitorId, null, 'partner')),
+        Linkado::attribution()->consume(p12Request($visitorId, '01ARZ3NDEKTSV4RRFFQ69G5FAV')),
+        Linkado::attribution()->consume(p12Request($visitorId, '01ARZ3NDEKTSV4RRFFQ69G5FAV')),
     ]);
 
     expect($results[0])->toBeInstanceOf(ConsumedAttribution::class)
@@ -178,6 +178,7 @@ function p12InsertAttribution(
 ): void {
     DB::connection('linkado_test')->table('linkado_pending_attributions')->insert([
         'visitor_hash' => hash('sha256', $visitorId),
+        'program_key' => 'synthetic-test-program', 'visit_order' => 1,
         'click_id' => $clickId,
         'referral_slug' => $referralSlug,
         'captured_at' => now(),

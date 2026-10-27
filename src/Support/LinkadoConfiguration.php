@@ -102,17 +102,6 @@ final readonly class LinkadoConfiguration
         return $value;
     }
 
-    public function lastValidVisit(): bool
-    {
-        $value = $this->config->get('linkado.tracking.last_valid_visit', false);
-
-        if (! is_bool($value)) {
-            throw $this->invalid('tracking.last_valid_visit');
-        }
-
-        return $value;
-    }
-
     public function requiredToken(): string
     {
         return $this->string('token');

@@ -1,30 +1,18 @@
-# Compatibility: v2.0.0 to v2.1.0
+# Compatibility: v2.1 to v3.0
 
-The existing v1.1→v2.0 history below remains unchanged. Laravel v2.1.0 adds an opt-in capability and requires PHP SDK `^1.1`, whose v1.1.0 release adds the authenticated resolver resource. Defaults and existing event/SSO APIs remain compatible. Package publication does not establish application migration, activation or hosted acceptance.
+Version 3.0 always uses the last server-verified visit before registration. There is no strategy flag. `tracking.last_valid_visit` and the first-touch/unverified capture branch have been removed; an old false setting no longer restores that behavior. Shadow still records local event snapshots but cannot verify or capture new visits. Off still stops new capture/recording, while consume-before-claim remains mandatory.
 
-Before enabling `tracking.last_valid_visit`, deploy `POST /api/v1/tracking/clicks/resolve`, install the reviewed SDK and Laravel package, publish/apply `2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php`, merge configuration manually, call `prepare` outside the registration transaction and retain consume-before-claim/outbox in the transaction. The migration adds nullable server `visit_order` and `program_key` only; the prior four migration files and historical rows are preserved. Generic first-touch behavior remains the default. New verified mode intentionally refuses unverified legacy pending rows, slug-only sources, malformed snapshots and HTTP inside a host transaction. Pause affected capture/signup for coordinated cutover; do not enable the flag on old code/schema. Rollback must disable the flag before old code resumes; do not drop evidence or migrations automatically.
+Require PHP SDK `^1.1`, the authenticated `POST /api/v1/tracking/clicks/resolve` endpoint and all five published migrations. Prepare the request outside the host transaction, then consume attribution, claim identity and freeze the customer outbox within the same connection transaction. The public facade and identity contract signatures and all historical migrations are unchanged. Internal `CapturePendingAttribution` now accepts `handle(Request $request, string $visitorId)`; the requestless overload and `handleRequest` entry were removed. `LinkadoConfiguration::lastValidVisit()` was removed.
 
-Renaming a participation slug does not invalidate its existing verified clicks. Legacy replacement/upgrade clears verification metadata when those columns exist, while legacy-only schemas remain supported. The Linkado resolver has its own per-credential rate budget, separate from event ingestion.
+Unverified pending rows, slug-only sources and malformed snapshots cannot establish attribution. Valid click cookies remain readable when the atomic snapshot is absent, with the same authenticated resolver verification. Renaming a participation slug does not invalidate its verified clicks. Do not backfill verification from browser values or change existing outbox bytes/history.
 
-The isolated test source overlays use explicit `LINKADO_TEST_PHP_SDK_PATH` (package) and `LINKADO_TEST_LARAVEL_PACKAGE_PATH` (merchant) with test-only Composer loaders. They change neither installed vendor files nor Composer locks. They prove source-candidate behavior only. Release SHA/CI/Packagist references and clean installed consumption must be verified for each release; hosted browser acceptance remains an independent application gate. See README for ordering, availability and in-flight-navigation limits.
+This is a breaking major release; published v2.1.0 and its opt-in behavior remain immutable. PHP SDK v1.1.0 already supports the required resolver and needs no release for this cleanup. Run installed consumer acceptance after publication; source tests are not proof of Packagist installation. Disable the affected integration before rollback and preserve schema/history.
 
-# Compatibility: v1.1.0 to v2.0.0
-
-V1.1.0 baseline: `9356205342526b1b41cb9778da46db9ba16d74ca`. V2 is intentionally major because defaults change. This document does not assert publication, remote readiness or completed hosted/financial acceptance.
-
-The public record/attribution/consume/contracts/getter signatures and immutable DTO payloads remain; `Linkado::enabled(LinkadoFeature): bool` is added. Mode defaults to live, tracking/customer/billing/refund to true, SSO to false, referral to via and TTL to 5184000. Missing live token/program disables new operations. Shadow requires program only and no longer loads hosted assets or runs SSO. Delivery preflight preserves pending events without new attempts during missing live configuration.
-
-`url` is a new optional raw HTTPS origin. `base_url` remains a full API URL and is optional. Origin wins; both are validated. Blank URL settings fall back; malformed nonempty settings never change the selected environment. CDN/proxy overrides affect only tracking, not API/SSO authority. Blank connection/queue names normalize to null. No SDK change, new schema, importer, history mutation or producer rewrite is introduced.
-
-Internal container constructor changes: Linkado manager receives configuration; CreateSsoLink receives lazy policy/user-resolver closures. Use facade/contracts instead of constructing package implementation classes.
-
-Migration: retain explicit prior mode/flags before upgrading the Composer constraint to `^2.0`; merge published config manually; remove legacy env overrides only after verification. Preserve all four migrations/outbox history, rebuild config cache and restart workers through normal deployment. Package publication requires exact-SHA CI and published install/reference verification. Before consumer deployment, complete the separate hosted-service and application acceptance gates.
-
-V1.1 already includes the fourth identity migration; v1.1-to-v2 adds no fifth migration. V1.0 consumers must verify that additive migration is applied even without an identity adapter. See [RELEASING.md](../RELEASING.md) for preparation, authorized publication and post-release verification; hosted/program/consumer readiness is tracked separately from package evidence.
+The v1.0→v1.1 comparison below is historical.
 
 ## Historical v1.0.0 to v1.1.0 changes
 
-Baseline: published `v1.0.0`, source `a3fa7fcb82d5e4af5a770024bb2f547441029b4a`. The following sections retain the historical v1.1 changes; the current v2 contract and release gates are above.
+Baseline: published `v1.0.0`, source `a3fa7fcb82d5e4af5a770024bb2f547441029b4a`. The following sections retain the historical v1.1 changes; the current contract and release gates are above.
 
 ## Supported integration API
 

@@ -10,10 +10,10 @@ This is the official `linkado-ru/laravel` Composer package: PHP 8.3+, Laravel 13
 
 ## Package rules
 
-- Read current status/diff first and preserve existing candidate work. The Laravel v2 defaults change is major; SDK v1.0.0 needs no separate release.
+- Read current status/diff first and preserve existing candidate work. The single verified-visit strategy is the v3 major contract; PHP SDK v1.1.0 already supplies the resolver.
 - The package owns outbox/delivery/retries/recovery/tracking/SSO infrastructure. Consumers own business producers, adapters, eligibility and transaction boundaries; the SDK owns DTOs and transport. Keep application-specific cohort/enrollment/impersonation policy out of package guidance.
 - Preserve event IDs, source keys and exact payload/hash; use the same configured connection for host and package transactions, with dispatch after outer commit. Consume before identity claim even when recording is disabled.
-- Preserve the four migrations and existing history, public signatures, and the two approved nullable tracking getter `return.unusedType` suppressions without widening them.
+- Preserve all five migrations and existing history, public signatures, and the two approved nullable tracking getter `return.unusedType` suppressions without widening them.
 - Keep credentials, one-time SSO URLs, raw cookies and prohibited PII out of diagnostics. Isolate ordinary tests from real `.env`, shared config cache and external HTTP.
 - Follow the contribution guide's English technical text and English/Russian user-facing translations.
 

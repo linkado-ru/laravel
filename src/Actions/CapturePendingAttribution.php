@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Linkado\Laravel\Actions;
 
 use Carbon\CarbonImmutable;
-use DateTimeInterface;
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -15,7 +14,6 @@ use Linkado\Laravel\Support\Attribution\IdentityLock;
 use Linkado\Laravel\Support\Attribution\PreparedAttribution;
 use Linkado\Laravel\Support\LinkadoConfiguration;
 use Linkado\PhpSdk\DataObjects\TrackingClickData;
-use RuntimeException;
 
 final readonly class CapturePendingAttribution
 {
@@ -26,42 +24,11 @@ final readonly class CapturePendingAttribution
         private PreparedAttribution $preparedAttribution,
     ) {}
 
-    public function handle(string $visitorId, mixed $clickId, mixed $referralSlug): void
+    public function handle(Request $request, string $visitorId): void
     {
-        $this->execute(null, $visitorId, $clickId, $referralSlug);
-    }
+        $verified = $this->preparedAttribution->prepare($request);
 
-    /** @internal Request-aware middleware entry; the legacy entry cannot bypass a bound adapter. */
-    public function handleRequest(Request $request, string $visitorId, mixed $clickId, mixed $referralSlug): void
-    {
-        $this->execute($request, $visitorId, $clickId, $referralSlug);
-    }
-
-    private function execute(?Request $request, string $visitorId, mixed $clickId, mixed $referralSlug): void
-    {
-        $verified = null;
-
-        if ($this->configuration->lastValidVisit()) {
-            if ($request === null) {
-                return;
-            }
-            $verified = $this->preparedAttribution->prepare($request);
-
-            if ($verified === null) {
-                return;
-            }
-            $clickId = $verified->click_id;
-            $referralSlug = null;
-        }
-
-        if (! AttributionIdentifiers::validCandidates($clickId, $referralSlug)) {
-            return;
-        }
-
-        $clickId = AttributionIdentifiers::click($clickId) ? $clickId : null;
-        $referralSlug = AttributionIdentifiers::referral($referralSlug) ? $referralSlug : null;
-
-        if ($clickId === null && $referralSlug === null) {
+        if ($verified === null) {
             return;
         }
 
@@ -70,14 +37,14 @@ final readonly class CapturePendingAttribution
 
         // Only a transaction owned by capture may be replayed after a deadlock.
         $connection->transaction(
-            fn () => $this->identityLock->run($request, function (?string $identityHash) use ($connection, $visitorHash, $clickId, $referralSlug, $verified): void {
-                $this->capture($connection, $visitorHash, $clickId, $referralSlug, $identityHash, $verified);
+            fn () => $this->identityLock->run($request, function (?string $identityHash) use ($connection, $visitorHash, $verified): void {
+                $this->capture($connection, $visitorHash, $identityHash, $verified);
             }),
             attempts: $connection->transactionLevel() === 0 ? 3 : 1,
         );
     }
 
-    private function capture(Connection $connection, string $visitorHash, ?string $clickId, ?string $referralSlug, ?string $identityHash, ?TrackingClickData $verified): void
+    private function capture(Connection $connection, string $visitorHash, ?string $identityHash, TrackingClickData $verified): void
     {
         $query = $connection->table('linkado_pending_attributions')->where('visitor_hash', $visitorHash);
         $row = $query->lockForUpdate()->first();
@@ -110,71 +77,20 @@ final readonly class CapturePendingAttribution
         // Read the clock only after acquiring the existing row or inserting our locked row.
         $now = CarbonImmutable::now();
 
-        $expiresAt = null;
-
-        if ($row !== null) {
-            $expiresAt = $row->expires_at;
-
-            if (! is_string($expiresAt) && ! $expiresAt instanceof DateTimeInterface) {
-                throw new RuntimeException('The stored attribution expiry is invalid.');
-            }
-        }
-
-        if ($verified !== null) {
-            if ($verified->expires_at <= $now || ($row !== null && ($row->identity_hash !== $identityHash || $row->consumed_at !== null))) {
-                return;
-            }
-
-            if ($row === null || $row->program_key !== $verified->program_key || AttributionIdentifiers::visitOrder($row->visit_order) === null || AttributionIdentifiers::visitOrder($row->visit_order) < $verified->visit_order) {
-                $query->update([
-                    'program_key' => $verified->program_key,
-                    'identity_hash' => $identityHash,
-                    'click_id' => $verified->click_id,
-                    'referral_slug' => null,
-                    'visit_order' => $verified->visit_order,
-                    'captured_at' => $verified->created_at,
-                    'expires_at' => $verified->expires_at,
-                    'consumed_at' => null,
-                    'updated_at' => $now,
-                ]);
-            }
-
+        if ($verified->expires_at <= $now || ($row !== null && ($row->identity_hash !== $identityHash || $row->consumed_at !== null))) {
             return;
         }
 
-        // Legacy writes must not inherit proof for a different click. Older schemas omit these columns.
-        $unverified = [];
-
-        foreach (['visit_order', 'program_key'] as $column) {
-            if ($row !== null && property_exists($row, $column)) {
-                $unverified[$column] = null;
-            }
-        }
-
-        if ($row === null || CarbonImmutable::parse($expiresAt)->lessThanOrEqualTo($now)) {
+        if ($row === null || $row->program_key !== $verified->program_key || AttributionIdentifiers::visitOrder($row->visit_order) === null || AttributionIdentifiers::visitOrder($row->visit_order) < $verified->visit_order) {
             $query->update([
-                ...$unverified,
+                'program_key' => $verified->program_key,
                 'identity_hash' => $identityHash,
-                'click_id' => $clickId,
-                'referral_slug' => $clickId === null ? $referralSlug : null,
-                'captured_at' => $now,
-                'expires_at' => $now->addSeconds($this->configuration->trackingTtlSeconds()),
-                'consumed_at' => null,
-                'updated_at' => $now,
-            ]);
-
-            return;
-        }
-
-        if ($row->identity_hash !== $identityHash) {
-            return;
-        }
-
-        if ($row->consumed_at === null && $row->click_id === null && $clickId !== null) {
-            $query->update([
-                ...$unverified,
-                'click_id' => $clickId,
+                'click_id' => $verified->click_id,
                 'referral_slug' => null,
+                'visit_order' => $verified->visit_order,
+                'captured_at' => $verified->created_at,
+                'expires_at' => $verified->expires_at,
+                'consumed_at' => null,
                 'updated_at' => $now,
             ]);
         }

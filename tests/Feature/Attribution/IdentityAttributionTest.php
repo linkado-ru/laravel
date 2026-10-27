@@ -6,14 +6,15 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
-use Linkado\Laravel\Actions\CapturePendingAttribution as CaptureAction;
 use Linkado\Laravel\Contracts\LocksLinkadoAttributionIdentity;
 use Linkado\Laravel\Events\AttributionConsumed;
 use Linkado\Laravel\Http\Middleware\CapturePendingAttribution;
 use Linkado\Laravel\Support\Attribution\AttributionIdentity;
 use Linkado\Laravel\Support\Attribution\AttributionManager;
 use Linkado\Laravel\Tests\Support\Attribution\HostIdentityAdapter;
+use Linkado\Laravel\Tests\Support\Attribution\VerifiedVisit;
 use Linkado\Laravel\Tests\Support\DatabaseConfiguration;
+use Saloon\Http\Faking\MockClient;
 use Symfony\Component\HttpFoundation\Response;
 
 beforeEach(function (): void {
@@ -23,12 +24,15 @@ beforeEach(function (): void {
     config()->set('linkado.tracking.ttl_seconds', 2592000);
     config()->set('database.connections.identity_test', DatabaseConfiguration::externalOrSqlite());
     config()->set('linkado.connection', 'identity_test');
-    config()->set('linkado.mode', 'shadow');
+    config()->set('linkado.mode', 'live');
+    $this->travelTo('2026-09-21 10:00:00');
+    VerifiedVisit::fake();
     config()->set('linkado.features.tracking', true);
     DB::purge('identity_test');
     $this->connection = DB::connection('identity_test');
     (require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php')->up();
     (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
+    (require __DIR__.'/../../../database/migrations/2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php')->up();
     $this->connection->getSchemaBuilder()->create('anonymous_identities', function (Blueprint $table): void {
         $table->string('key')->primary();
         $table->boolean('claimed')->default(false);
@@ -37,6 +41,7 @@ beforeEach(function (): void {
 });
 
 afterEach(function (): void {
+    MockClient::destroyGlobal();
     $this->connection->getSchemaBuilder()->dropIfExists('anonymous_identities');
     (require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php')->down();
     DB::purge('identity_test');
@@ -57,7 +62,7 @@ it('rejects a late capture after the previously read anonymous identity was clai
 
 function identityRequest(?string $key = 'anonymous-a', ?string $visitor = '01ARZ3NDEKTSV4RRFFQ69G5FAV', ?string $slug = 'first'): Request
 {
-    $request = Request::create('/landing', 'GET', cookies: ['linkado_visitor' => $visitor, 'lk_referral' => $slug]);
+    $request = Request::create('/landing', 'GET', cookies: ['linkado_visitor' => $visitor, 'lk_click' => $slug === null ? null : VerifiedVisit::click($slug)]);
     $request->attributes->set('anonymous_identity', $key);
 
     return $request;
@@ -68,7 +73,7 @@ function identityCapture(Request $request): void
     app(CapturePendingAttribution::class)->handle($request, fn (): Response => new Response('host'));
 }
 
-it('binds the first touch to a namespaced hash and consumes it once after commit', function (): void {
+it('binds a verified visit to a namespaced hash and consumes it once after commit', function (): void {
     Event::fake([AttributionConsumed::class]);
     app()->instance(LocksLinkadoAttributionIdentity::class, new HostIdentityAdapter($this->connection));
     identityCapture(identityRequest());
@@ -77,7 +82,7 @@ it('binds the first touch to a namespaced hash and consumes it once after commit
         ->and($row->identity_hash)->not->toBe(hash('sha256', 'anonymous-a'));
     $this->connection->transaction(function (): void {
         $snapshot = app(AttributionManager::class)->consume(identityRequest());
-        expect($snapshot?->referralSlug)->toBe('first')
+        expect($snapshot?->clickId)->toBe(VerifiedVisit::click('first'))
             ->and(app(AttributionManager::class)->consume(identityRequest()))->toBeNull();
         Event::assertNotDispatched(AttributionConsumed::class);
     });
@@ -112,7 +117,7 @@ it('never modifies another identity row even with invalid cookies or expiry', fu
 })->with([false, true])->with([null, 'wrong', 'first']);
 
 it('does not adopt active legacy rows or expose bound rows after adapter removal', function (): void {
-    app(CaptureAction::class)->handle('01ARZ3NDEKTSV4RRFFQ69G5FAV', null, 'first');
+    identityCapture(identityRequest());
     $legacy = $this->connection->table('linkado_pending_attributions')->sole();
     $manager = app(AttributionManager::class);
     app()->instance(LocksLinkadoAttributionIdentity::class, new HostIdentityAdapter($this->connection));
@@ -121,7 +126,7 @@ it('does not adopt active legacy rows or expose bound rows after adapter removal
         expect($manager->consume(identityRequest()))->toBeNull();
     });
     expect($this->connection->table('linkado_pending_attributions')->sole())->toEqual($legacy);
-    $this->connection->table('linkado_pending_attributions')->update(['expires_at' => now()->subSecond()]);
+    $this->connection->table('linkado_pending_attributions')->delete();
     identityCapture(identityRequest());
     $bound = $this->connection->table('linkado_pending_attributions')->sole();
     expect($bound->identity_hash)->not->toBeNull();
@@ -129,7 +134,9 @@ it('does not adopt active legacy rows or expose bound rows after adapter removal
     $this->connection->transaction(function () use ($manager): void {
         expect($manager->consume(identityRequest()))->toBeNull();
     });
-    app(CaptureAction::class)->handle('01ARZ3NDEKTSV4RRFFQ69G5FAV', '01ARZ3NDEKTSV4RRFFQ69G5FAW', null);
+    $next = identityRequest();
+    $next->cookies->set('lk_click', '01ARZ3NDEKTSV4RRFFQ69G5FAW');
+    identityCapture($next);
     expect($this->connection->table('linkado_pending_attributions')->sole())->toEqual($bound);
 });
 
@@ -147,7 +154,7 @@ it('fails closed for unresolved or closed identities without sharing request sta
     });
     expect($this->connection->table('linkado_pending_attributions')->sole())->toEqual($row);
     $this->connection->transaction(function () use ($manager): void {
-        expect($manager->consume(identityRequest())?->referralSlug)->toBe('first');
+        expect($manager->consume(identityRequest())?->clickId)->toBe(VerifiedVisit::click('first'));
     });
 })->with([null, 'absent', 'closed']);
 
@@ -164,16 +171,6 @@ it('blocks closed identity capture after expiry prune and visitor rotation', fun
     identityCapture(identityRequest(visitor: $transition === 'rotate' ? '01ARZ3NDEKTSV4RRFFQ69G5FAW' : '01ARZ3NDEKTSV4RRFFQ69G5FAV'));
     expect($this->connection->table('linkado_pending_attributions')->get())->toEqual($before);
 })->with(['expiry', 'prune', 'rotate']);
-
-it('cannot bypass a bound adapter using the legacy requestless capture action', function (): void {
-    $action = app(CaptureAction::class);
-    app()->instance(LocksLinkadoAttributionIdentity::class, new HostIdentityAdapter($this->connection));
-    $action->handle('01ARZ3NDEKTSV4RRFFQ69G5FAV', null, 'first');
-    expect($this->connection->table('linkado_pending_attributions')->count())->toBe(0);
-    app()->offsetUnset(LocksLinkadoAttributionIdentity::class);
-    $action->handle('01ARZ3NDEKTSV4RRFFQ69G5FAV', null, 'first');
-    expect($this->connection->table('linkado_pending_attributions')->count())->toBe(1);
-});
 
 it('locks identity before reading pending even without visitor source or enabled events', function (?string $visitor, ?string $slug): void {
     config()->set('linkado.mode', 'off');
@@ -201,7 +198,7 @@ it('rolls back claim and consumption together allowing legitimate capture again'
 
     try {
         $this->connection->transaction(function (): void {
-            expect(app(AttributionManager::class)->consume(identityRequest())?->referralSlug)->toBe('first');
+            expect(app(AttributionManager::class)->consume(identityRequest())?->clickId)->toBe(VerifiedVisit::click('first'));
             $this->connection->table('anonymous_identities')->update(['claimed' => true]);
 
             throw new RuntimeException('Rollback claim');
@@ -240,14 +237,15 @@ it('rolls back operation writes if the adapter throws or repeats the callback', 
             }
         }
     });
-    $this->connection->transaction(function () use ($operation, $failure): void {
-        expect(function () use ($operation): void {
+    $prepared = identityRequest();
+    $prepared->cookies->set('lk_click', '01ARZ3NDEKTSV4RRFFQ69G5FAW');
+    app(AttributionManager::class)->prepare($prepared);
+    $this->connection->transaction(function () use ($operation, $failure, $prepared): void {
+        expect(function () use ($operation, $prepared): void {
             if ($operation === 'consume') {
                 app(AttributionManager::class)->consume(identityRequest());
             } else {
-                $request = identityRequest();
-                $request->cookies->set('lk_click', '01ARZ3NDEKTSV4RRFFQ69G5FAW');
-                identityCapture($request);
+                identityCapture($prepared);
             }
         })->toThrow($failure === 'throw' ? RuntimeException::class : LogicException::class);
     });
@@ -288,17 +286,18 @@ it('rejects deferred callbacks without writing outside the identity transaction'
         ->and($this->connection->transactionLevel())->toBe(0);
 });
 
-it('preserves ownership and the first window during same identity slug upgrades', function (): void {
+it('preserves ownership and refreshes the server window for a newer verified visit', function (): void {
     app()->instance(LocksLinkadoAttributionIdentity::class, new HostIdentityAdapter($this->connection));
     identityCapture(identityRequest());
     $original = $this->connection->table('linkado_pending_attributions')->sole();
+    $this->travel(60)->seconds();
     $request = identityRequest();
     $request->cookies->set('lk_click', '01ARZ3NDEKTSV4RRFFQ69G5FAW');
     identityCapture($request);
     $upgraded = $this->connection->table('linkado_pending_attributions')->sole();
     expect($upgraded->identity_hash)->toBe($original->identity_hash)
-        ->and($upgraded->captured_at)->toBe($original->captured_at)
-        ->and($upgraded->expires_at)->toBe($original->expires_at)
+        ->and($upgraded->captured_at)->toBe('2026-09-21 10:01:00')
+        ->and($upgraded->expires_at)->toBe('2026-09-21 10:03:00')
         ->and($upgraded->click_id)->toBe('01ARZ3NDEKTSV4RRFFQ69G5FAW')
         ->and($upgraded->referral_slug)->toBeNull();
 });
@@ -339,14 +338,15 @@ it('rolls back callbacks with missing or extra arguments even when the adapter s
             }
         }
     });
-    $this->connection->transaction(function () use ($operation): void {
-        expect(function () use ($operation): void {
+    $prepared = identityRequest();
+    $prepared->cookies->set('lk_click', '01ARZ3NDEKTSV4RRFFQ69G5FAW');
+    app(AttributionManager::class)->prepare($prepared);
+    $this->connection->transaction(function () use ($operation, $prepared): void {
+        expect(function () use ($operation, $prepared): void {
             if ($operation === 'consume') {
                 app(AttributionManager::class)->consume(identityRequest());
             } else {
-                $request = identityRequest();
-                $request->cookies->set('lk_click', '01ARZ3NDEKTSV4RRFFQ69G5FAW');
-                identityCapture($request);
+                identityCapture($prepared);
             }
         })->toThrow(LogicException::class);
     });

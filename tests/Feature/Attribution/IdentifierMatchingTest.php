@@ -5,11 +5,12 @@ declare(strict_types=1);
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Linkado\Laravel\Actions\CapturePendingAttribution;
 use Linkado\Laravel\Events\AttributionConsumed;
 use Linkado\Laravel\Facades\Linkado;
+use Linkado\Laravel\Http\Middleware\CapturePendingAttribution;
 use Linkado\Laravel\Support\Attribution\ConsumedAttribution;
 use Linkado\Laravel\Tests\Support\DatabaseConfiguration;
+use Symfony\Component\HttpFoundation\Response;
 
 beforeEach(function (): void {
     config()->set('linkado.token', 'synthetic-test-token');
@@ -22,6 +23,7 @@ beforeEach(function (): void {
     DB::purge('matching');
     (require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_linkado_pending_attributions_table.php')->up();
     (require __DIR__.'/../../../database/migrations/2026_09_21_000003_add_identity_hash_to_linkado_pending_attributions_table.php')->up();
+    (require __DIR__.'/../../../database/migrations/2026_10_20_075845_add_visit_order_to_linkado_pending_attributions_table.php')->up();
     CarbonImmutable::setTestNow('2026-09-21 10:00:00');
     $this->consumedEvents = [];
     app('events')->listen(AttributionConsumed::class, function (AttributionConsumed $event): void {
@@ -68,10 +70,6 @@ it('returns only the exactly matched valid stored source after commit', function
     'click' => ['01ARZ3NDEKTSV4RRFFQ69G5FAV', null, ['lk_click' => '01ARZ3NDEKTSV4RRFFQ69G5FAV']],
     'click wins over valid referral' => ['01ARZ3NDEKTSV4RRFFQ69G5FAV', null, ['lk_click' => '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'lk_referral' => 'partner']],
     'lowercase ULID retained' => ['01arz3ndektsv4rrffq69g5fav', null, ['lk_click' => '01arz3ndektsv4rrffq69g5fav']],
-    'slug' => [null, 'partner-42', ['lk_referral' => 'partner-42']],
-    'empty click absent' => [null, 'partner', ['lk_click' => '', 'lk_referral' => 'partner']],
-    'single character slug' => [null, 'a', ['lk_referral' => 'a']],
-    '100 character slug' => [null, str_repeat('a', 100), ['lk_referral' => str_repeat('a', 100)]],
 ]);
 
 it('never confirms a slug from query or upgrades it during consume', function (array $cookies): void {
@@ -89,11 +87,11 @@ it('never confirms a slug from query or upgrades it during consume', function (a
 ]);
 
 it('rejects malformed capture inputs without normalization or fallback', function (string $source, mixed $value): void {
-    app(CapturePendingAttribution::class)->handle(
-        '01ARZ3NDEKTSV4RRFFQ69G5FAX',
-        $source === 'click' ? $value : '01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        $source === 'slug' ? $value : 'partner',
-    );
+    $request = matchingRequest([
+        'lk_click' => $source === 'click' ? $value : '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        'lk_referral' => $source === 'slug' ? $value : 'partner',
+    ]);
+    app(CapturePendingAttribution::class)->handle($request, fn (): Response => new Response);
     expect(DB::connection('matching')->table('linkado_pending_attributions')->count())->toBe(0);
 })->with('malformed attribution identifiers');
 
@@ -168,7 +166,7 @@ it('does not modify another visitor row for an invalid or unknown visitor cookie
 })->with([null, '', 'tampered', '01ARZ3NDEKTSV4RRFFQ69G5FAY', [['array']]]);
 
 it('rolls back a discard with its caller and then permits a legitimate consume', function (): void {
-    matchingInsert(null, 'partner');
+    matchingInsert('01ARZ3NDEKTSV4RRFFQ69G5FAV', null);
     $connection = DB::connection('matching');
     $before = $connection->table('linkado_pending_attributions')->sole();
     $connection->beginTransaction();
@@ -181,28 +179,29 @@ it('rolls back a discard with its caller and then permits a legitimate consume',
     }
     expect($connection->table('linkado_pending_attributions')->sole())->toEqual($before)
         ->and($this->consumedEvents)->toBeEmpty();
-    expect($connection->transaction(fn () => Linkado::attribution()->consume(matchingRequest(['lk_referral' => 'partner'])))?->referralSlug)->toBe('partner')
+    expect($connection->transaction(fn () => Linkado::attribution()->consume(matchingRequest(['lk_click' => '01ARZ3NDEKTSV4RRFFQ69G5FAV'])))?->clickId)->toBe('01ARZ3NDEKTSV4RRFFQ69G5FAV')
         ->and($this->consumedEvents)->toHaveCount(1);
 });
 
 it('prevents consume and recapture after a committed discard until the original expiry', function (): void {
-    matchingInsert(null, 'partner');
+    matchingInsert('01ARZ3NDEKTSV4RRFFQ69G5FAV', null);
     $connection = DB::connection('matching');
     $connection->transaction(fn () => Linkado::attribution()->consume(matchingRequest()));
     CarbonImmutable::setTestNow('2026-09-21 10:01:59');
-    app(CapturePendingAttribution::class)->handle('01ARZ3NDEKTSV4RRFFQ69G5FAX', '01ARZ3NDEKTSV4RRFFQ69G5FAV', null);
+    app(CapturePendingAttribution::class)->handle(matchingRequest(['lk_click' => '01ARZ3NDEKTSV4RRFFQ69G5FAV']), fn (): Response => new Response);
     expect($connection->transaction(fn () => Linkado::attribution()->consume(matchingRequest(['lk_referral' => 'partner']))))->toBeNull()
         ->and($connection->table('linkado_pending_attributions')->sole()->expires_at)->toBe('2026-09-21 10:02:00')
         ->and($this->consumedEvents)->toBeEmpty();
     CarbonImmutable::setTestNow('2026-09-21 10:02:00');
-    app(CapturePendingAttribution::class)->handle('01ARZ3NDEKTSV4RRFFQ69G5FAX', null, 'new-partner');
-    expect($connection->transaction(fn () => Linkado::attribution()->consume(matchingRequest(['lk_referral' => 'new-partner'])))?->referralSlug)->toBe('new-partner');
+    app(CapturePendingAttribution::class)->handle(matchingRequest(['lk_referral' => 'new-partner']), fn (): Response => new Response);
+    expect($connection->transaction(fn () => Linkado::attribution()->consume(matchingRequest(['lk_referral' => 'new-partner']))))->toBeNull();
 });
 
 function matchingInsert(?string $click, ?string $slug): void
 {
     DB::connection('matching')->table('linkado_pending_attributions')->insert([
         'visitor_hash' => hash('sha256', '01ARZ3NDEKTSV4RRFFQ69G5FAX'),
+        'program_key' => 'synthetic-test-program', 'visit_order' => 1,
         'click_id' => $click, 'referral_slug' => $slug,
         'captured_at' => now(), 'expires_at' => now()->addSeconds(120),
         'created_at' => now(), 'updated_at' => now(),

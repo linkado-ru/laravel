@@ -2,7 +2,18 @@
 
 All notable changes to `linkado-ru/laravel` are documented here. The package follows [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 3.0.0 - 2026-10-27
+
+### Breaking changes
+
+- Always use the last authenticated server-verified visit before registration. Remove the strategy flag, first-touch/unverified capture branch, slug/query-only capture and requestless internal capture. Keep pre-transaction preparation, server visit ordering/expiry, identity locks and immutable registration snapshots.
+- Shadow records local event snapshots without verifying or capturing new visits. Existing facade, identity and event DTO contracts remain unchanged; PHP SDK `^1.1` and all five existing migrations are required.
+
+### Fixed
+
+- Recheck live mode before reusing request-local verification for capture. A request prepared in live mode cannot create attribution after switching to shadow/off; previously captured verified attribution remains consumable before identity claim.
+- Report missing `visit_order` or `program_key` in `linkado:health` instead of accepting an incomplete attribution schema.
+- Remove the temporary PHP SDK source-overlay bootstrap from tests and analysis; use the installed released dependency.
 
 ## 2.1.0 - 2026-10-26
 
